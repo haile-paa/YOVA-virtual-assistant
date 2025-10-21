@@ -4,7 +4,7 @@ import ScheduleWidget from "@/components/ScheduleWidget";
 import TasksWidget from "@/components/TasksWidget";
 import { LinearGradient } from "expo-linear-gradient";
 import { ArrowRight, Calendar, Search } from "lucide-react-native";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -13,9 +13,34 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useRouter } from "expo-router";
 
 export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [userData, setUserData] = useState<any>(null);
+  const router = useRouter();
+
+  useEffect(() => {
+    loadUserData();
+  }, []);
+
+  const loadUserData = async () => {
+    try {
+      const userDataString = await AsyncStorage.getItem("userData");
+      if (userDataString) {
+        setUserData(JSON.parse(userDataString));
+      } else {
+        // Fallback to old onboarding data if available
+        const name = await AsyncStorage.getItem("userFirstName");
+        if (name) {
+          setUserData({ firstName: name });
+        }
+      }
+    } catch (error) {
+      console.error("Error loading user data:", error);
+    }
+  };
 
   const getCurrentDate = () => {
     const date = new Date();
@@ -32,6 +57,26 @@ export default function HomeScreen() {
     setSearchQuery("");
   };
 
+  const handleAvatarPress = () => {
+    // Navigate to profile or show user options
+    // For now, let's navigate to the More tab
+    router.push("/(tabs)/more");
+  };
+
+  const getUserInitial = () => {
+    if (userData?.firstName) {
+      return userData.firstName.charAt(0).toUpperCase();
+    }
+    return "U";
+  };
+
+  const getUserName = () => {
+    if (userData?.firstName) {
+      return userData.firstName;
+    }
+    return "User";
+  };
+
   return (
     <View style={styles.container}>
       <LinearGradient
@@ -43,9 +88,9 @@ export default function HomeScreen() {
             <Text style={styles.logo}>YOVA</Text>
             <Text style={styles.subtitle}>Your Virtual Assistant</Text>
           </View>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>H</Text>
-          </View>
+          <TouchableOpacity style={styles.avatar} onPress={handleAvatarPress}>
+            <Text style={styles.avatarText}>{getUserInitial()}</Text>
+          </TouchableOpacity>
         </View>
 
         <ScrollView
@@ -54,7 +99,7 @@ export default function HomeScreen() {
         >
           <View style={styles.welcomeSection}>
             <Text style={styles.welcomeText}>Welcome Back!</Text>
-            <Text style={styles.userName}>Haile</Text>
+            <Text style={styles.userName}>{getUserName()}</Text>
 
             <View style={styles.dateRow}>
               <Calendar size={16} color='#F5C563' strokeWidth={2} />

@@ -1,6 +1,13 @@
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import { ArrowLeft, Send, MoreVertical, History } from "lucide-react-native";
+import {
+  ArrowLeft,
+  Send,
+  MoreVertical,
+  History,
+  Plus,
+  Trash2,
+} from "lucide-react-native";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   ScrollView,
@@ -12,28 +19,42 @@ import {
   TextInput,
   Alert,
   Keyboard,
-  NativeSyntheticEvent,
-  TextInputSubmitEditingEventData,
+  ActivityIndicator,
 } from "react-native";
 import { GoogleGenAI } from "@google/genai";
-import { GENAI_API_KEY } from "@env";
+import { ENV } from "../../config/env";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+// API Configuration - Define once, use everywhere
+const API_CONFIG = {
+  BASE_URL: "http://192.168.1.2:8080/api",
+  ENDPOINTS: {
+    CHATS: "/chats",
+    CHAT_MESSAGES: "/chats/{id}/messages",
+  },
+};
 
 // Constants
 const { width, height } = Dimensions.get("window");
 const WELCOME_MESSAGE =
   "Hey there! I'm YoVA, your AI assistant. I'm here to help you with anything you need. What's on your mind?";
-const AI_MODELS = [
-  "gemini-2.0-flash-exp",
-  "gemini-1.5-flash",
-  "gemini-1.5-pro",
-];
 
 // Types
 interface Message {
   id: string;
   role: "user" | "assistant";
-  text: string;
+  content: string;
   timestamp: Date;
+}
+
+interface Chat {
+  _id: string;
+  id: string;
+  title: string;
+  messages: Message[];
+  userId?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // Custom Hooks
@@ -118,7 +139,7 @@ const useThinkingAnimation = (isThinking: boolean) => {
   return thinkingDots;
 };
 
-// AI Service with optimized human-like responses
+// AI Service
 class HumanizedAIService {
   private genAI: GoogleGenAI;
 
@@ -126,31 +147,11 @@ class HumanizedAIService {
     this.genAI = new GoogleGenAI({ apiKey });
   }
 
-  async testModels(models: string[]): Promise<string[]> {
-    const workingModels: string[] = [];
-    for (const modelName of models) {
-      try {
-        const response = await this.genAI.models.generateContent({
-          model: modelName,
-          contents: "Say 'Hello' in a friendly, human way",
-        });
-        if (response.text) workingModels.push(modelName);
-      } catch (error) {
-        console.log(`❌ Model ${modelName} failed:`, error);
-      }
-    }
-    return workingModels;
-  }
-
-  async generateHumanizedResponse(
-    model: string,
-    userInput: string
-  ): Promise<string> {
+  async generateHumanizedResponse(userInput: string): Promise<string> {
     try {
-      const humanizedPrompt = this.createHumanizedPrompt(userInput);
       const response = await this.genAI.models.generateContent({
-        model,
-        contents: humanizedPrompt,
+        model: "gemini-2.0-flash-exp",
+        contents: this.createHumanizedPrompt(userInput),
       });
 
       let responseText =
@@ -164,112 +165,15 @@ class HumanizedAIService {
   }
 
   private createHumanizedPrompt(userInput: string): string {
-    const basePrompt = `Respond naturally and conversationally. Be friendly, concise, and avoid robotic language. Use contractions and show personality. User's message: "${userInput}"`;
-
-    if (this.isQuestion(userInput))
-      return (
-        basePrompt +
-        "\n\nAnswer directly and helpfully without unnecessary preamble."
-      );
-    if (this.isCasualGreeting(userInput))
-      return (
-        basePrompt +
-        "\n\nRespond warmly and briefly, then ask how you can help."
-      );
-
-    return basePrompt;
-  }
-
-  private isQuestion(input: string): boolean {
-    const questionWords = [
-      "what",
-      "how",
-      "why",
-      "when",
-      "where",
-      "who",
-      "which",
-      "can",
-      "could",
-      "would",
-      "should",
-      "is",
-      "are",
-      "do",
-      "does",
-    ];
-    const lowerInput = input.toLowerCase().trim();
-    return (
-      questionWords.some((word) => lowerInput.startsWith(word)) ||
-      lowerInput.includes("?")
-    );
-  }
-
-  private isCasualGreeting(input: string): boolean {
-    const greetings = [
-      "hello",
-      "hi",
-      "hey",
-      "hi there",
-      "hello there",
-      "hey there",
-    ];
-    const lowerInput = input.toLowerCase().trim();
-    return greetings.some(
-      (greeting) =>
-        lowerInput === greeting || lowerInput.startsWith(greeting + " ")
-    );
+    return `Respond naturally and conversationally. Be friendly, concise, and avoid robotic language. Use contractions and show personality. User's message: "${userInput}"`;
   }
 
   private postProcessResponse(text: string, userInput: string): string {
-    let processed = text
-      .replace(
-        /^(As an AI assistant,?|I am an AI|As a language model,?)\s*/i,
-        ""
-      )
-      .replace(/I am designed to/gi, "I can")
-      .replace(/utilize/gi, "use")
-      .replace(/assistance/gi, "help")
-      .trim();
-
-    if (
-      this.isCasualGreeting(userInput) &&
-      !/^[Hh]i|[Hh]ey|[Hh]ello/.test(processed)
-    ) {
-      const naturalStarters = [
-        "Hey!",
-        "Hi!",
-        "Hello!",
-        "Hey there!",
-        "Hi there!",
-      ];
-      processed = `${
-        naturalStarters[Math.floor(Math.random() * naturalStarters.length)]
-      } ${processed}`;
-    }
-
+    let processed = text.trim();
     processed = processed.charAt(0).toUpperCase() + processed.slice(1);
-    if (processed.length < 10 && !processed.includes("?"))
-      processed += " How can I help you further?";
-
     return processed;
   }
 }
-
-// Quick response templates for common queries
-const quickResponses: { [key: string]: string } = {
-  hello: "Hey there! 👋 How can I help you today?",
-  hi: "Hello! 😊 What's on your mind?",
-  hey: "Hey! 👋 What can I do for you?",
-  "how are you":
-    "I'm doing great, thanks for asking! Ready to help you with whatever you need.",
-  "thank you": "You're welcome! 😊 Happy to help!",
-  thanks: "No problem! Let me know if you need anything else.",
-  "what can you do":
-    "I can help with answering questions, brainstorming ideas, explaining concepts, and much more! What would you like to know?",
-  "who are you":
-    "I'm YoVA! Your friendly AI assistant developed by Pa Dev's. here to help you with anything you need. 😊",
-};
 
 // Components
 const Header = ({
@@ -277,6 +181,8 @@ const Header = ({
   onToggleHistory,
   onShowModelInfo,
   showHistory,
+  onNewChat,
+  currentChat,
 }: any) => (
   <View style={styles.header}>
     <TouchableOpacity style={styles.headerButton} onPress={onBack}>
@@ -284,9 +190,14 @@ const Header = ({
     </TouchableOpacity>
     <View style={styles.headerCenter}>
       <Text style={styles.headerTitle}>YoVA</Text>
-      <Text style={styles.headerSubtitle}>AI Assistant</Text>
+      <Text style={styles.headerSubtitle}>
+        {currentChat?.title || "New Chat"}
+      </Text>
     </View>
     <View style={styles.headerRight}>
+      <TouchableOpacity style={styles.headerButton} onPress={onNewChat}>
+        <Plus size={24} color='#FFFFFF' strokeWidth={2} />
+      </TouchableOpacity>
       <TouchableOpacity style={styles.headerButton} onPress={onToggleHistory}>
         <History
           size={24}
@@ -330,44 +241,66 @@ const MessageBubble = ({
       </View>
     ) : (
       <Text style={styles.messageText}>
-        {isTyping ? displayedText : message.text}
+        {isTyping ? displayedText : message.content}
         {isTyping && <Text style={styles.cursor}>|</Text>}
       </Text>
     )}
   </View>
 );
 
-const HistorySidebar = ({
-  conversation,
-  selectedMessage,
-  onSelectMessage,
+const ChatHistorySidebar = ({
+  chats,
+  currentChat,
+  onSelectChat,
+  onDeleteChat,
   onClose,
+  loading,
 }: any) => (
   <View style={styles.historyContainer}>
     <View style={styles.historyHeader}>
-      <Text style={styles.historyTitle}>Conversation History</Text>
+      <Text style={styles.historyTitle}>Chat History</Text>
       <TouchableOpacity onPress={onClose} style={styles.hideButton}>
         <Text style={styles.hideButtonText}>✕</Text>
       </TouchableOpacity>
     </View>
     <ScrollView style={styles.historyList} showsVerticalScrollIndicator={false}>
-      {conversation.map((message: Message) => (
-        <TouchableOpacity
-          key={message.id}
-          style={[
-            styles.historyItem,
-            selectedMessage === message.id && styles.historyItemSelected,
-          ]}
-          onPress={() => onSelectMessage(message.id)}
-        >
-          <Text style={styles.historyIcon}>
-            {message.role === "user" ? "👤" : "🤖"}
-          </Text>
-          <Text style={styles.historyText} numberOfLines={2}>
-            {message.text}
-          </Text>
-        </TouchableOpacity>
-      ))}
+      {loading ? (
+        <View style={styles.loadingState}>
+          <ActivityIndicator size='small' color='#F5C563' />
+          <Text style={styles.loadingText}>Loading chats...</Text>
+        </View>
+      ) : chats.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyText}>No chats yet</Text>
+          <Text style={styles.emptySubtext}>Start a new conversation!</Text>
+        </View>
+      ) : (
+        chats.map((chat: Chat) => (
+          <TouchableOpacity
+            key={chat.id}
+            style={[
+              styles.historyItem,
+              currentChat?.id === chat.id && styles.historyItemSelected,
+            ]}
+            onPress={() => onSelectChat(chat)}
+          >
+            <View style={styles.historyItemContent}>
+              <Text style={styles.historyItemTitle} numberOfLines={1}>
+                {chat.title}
+              </Text>
+              <Text style={styles.historyItemDate}>
+                {new Date(chat.updatedAt).toLocaleDateString()}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => onDeleteChat(chat.id)}
+              style={styles.deleteChatButton}
+            >
+              <Trash2 size={16} color='#8B7965' />
+            </TouchableOpacity>
+          </TouchableOpacity>
+        ))
+      )}
     </ScrollView>
   </View>
 );
@@ -378,8 +311,6 @@ const InputBar = ({
   onSubmit,
   isProcessing,
   hasAvailableModels,
-  onClear,
-  hasConversation,
 }: any) => {
   const handleSubmit = useCallback(() => onSubmit(), [onSubmit]);
   const isSendDisabled =
@@ -406,14 +337,13 @@ const InputBar = ({
           onPress={onSubmit}
           disabled={isSendDisabled}
         >
-          <Send size={20} color='#1A1410' strokeWidth={2.5} />
+          {isProcessing ? (
+            <ActivityIndicator size='small' color='#1A1410' />
+          ) : (
+            <Send size={20} color='#1A1410' strokeWidth={2.5} />
+          )}
         </TouchableOpacity>
       </View>
-      {hasConversation && (
-        <TouchableOpacity style={styles.clearButton} onPress={onClear}>
-          <Text style={styles.clearButtonText}>Clear Chat</Text>
-        </TouchableOpacity>
-      )}
     </View>
   );
 };
@@ -421,140 +351,402 @@ const InputBar = ({
 // Main Chat Component
 export default function AssistantScreen() {
   // State management
-  const [conversation, setConversation] = useState<Message[]>([]);
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [currentChat, setCurrentChat] = useState<Chat | null>(null);
   const [textInput, setTextInput] = useState("");
-  const [selectedMessage, setSelectedMessage] = useState<string | null>(null);
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [currentModel, setCurrentModel] = useState<string>("");
   const [showHistory, setShowHistory] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [loadingChats, setLoadingChats] = useState(false);
 
   // Refs and hooks
   const scrollViewRef = useRef<ScrollView>(null);
-  const aiService = useRef(new HumanizedAIService(GENAI_API_KEY));
+  const aiService = useRef(new HumanizedAIService(ENV.GENAI_API_KEY));
   const { isKeyboardVisible, keyboardHeight } = useKeyboard();
 
   // Derived states
-  const lastMessage = conversation[conversation.length - 1];
+  const messages = currentChat?.messages || [];
+  const lastMessage = messages[messages.length - 1];
   const displayedText = useTypingEffect(
-    lastMessage?.text || WELCOME_MESSAGE,
-    !isProcessing && conversation.length > 0
+    lastMessage?.content || "",
+    !isProcessing && messages.length > 0
   );
   const thinkingDots = useThinkingAnimation(isProcessing);
-  const hasAvailableModels = useMemo(
-    () => availableModels.length > 0,
-    [availableModels]
-  );
-  const hasConversation = useMemo(
-    () => conversation.length > 0,
-    [conversation]
-  );
   const contentPaddingBottom = isKeyboardVisible ? keyboardHeight + 80 : 100;
 
-  // Initialize AI connection
-  useEffect(() => {
-    const initializeAI = async () => {
-      const workingModels = await aiService.current.testModels(AI_MODELS);
-      setAvailableModels(workingModels);
-      setCurrentModel(workingModels[0] || "");
+  // Get auth token
+  const getAuthToken = async (): Promise<string | null> => {
+    try {
+      return await AsyncStorage.getItem("userToken");
+    } catch (error) {
+      console.error("Error getting auth token:", error);
+      return null;
+    }
+  };
+
+  // Helper function to make API calls
+  const apiCall = async (endpoint: string, options: RequestInit = {}) => {
+    const token = await getAuthToken();
+
+    const defaultOptions: RequestInit = {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
     };
-    initializeAI();
+
+    const response = await fetch(`${API_CONFIG.BASE_URL}${endpoint}`, {
+      ...defaultOptions,
+      ...options,
+    });
+
+    return response;
+  };
+
+  // Helper to format endpoint with parameters
+  const formatEndpoint = (endpoint: string, params: Record<string, string>) => {
+    let formattedEndpoint = endpoint;
+    Object.keys(params).forEach((key) => {
+      formattedEndpoint = formattedEndpoint.replace(`{${key}}`, params[key]);
+    });
+    return formattedEndpoint;
+  };
+
+  // Load chats from backend
+  const loadChats = async () => {
+    try {
+      setLoadingChats(true);
+      const token = await getAuthToken();
+
+      if (!token) {
+        console.log("No auth token found");
+        return;
+      }
+
+      const response = await apiCall(API_CONFIG.ENDPOINTS.CHATS, {
+        method: "GET",
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const transformedChats = data.map((chat: any) => ({
+          id: chat._id,
+          _id: chat._id,
+          title: chat.title,
+          messages: chat.messages || [],
+          userId: chat.userId,
+          createdAt: chat.createdAt,
+          updatedAt: chat.updatedAt,
+        }));
+        setChats(transformedChats);
+      } else {
+        console.error("Failed to fetch chats:", response.status);
+      }
+    } catch (error) {
+      console.error("Error fetching chats:", error);
+    } finally {
+      setLoadingChats(false);
+    }
+  };
+
+  // Create new chat in backend
+  const createChatInBackend = async (title: string): Promise<Chat | null> => {
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        Alert.alert("Error", "Authentication required");
+        return null;
+      }
+
+      const response = await apiCall(API_CONFIG.ENDPOINTS.CHATS, {
+        method: "POST",
+        body: JSON.stringify({
+          title: title,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return {
+          id: data._id,
+          _id: data._id,
+          title: data.title,
+          messages: data.messages || [],
+          userId: data.userId,
+          createdAt: data.createdAt,
+          updatedAt: data.updatedAt,
+        };
+      } else {
+        const errorData = await response.json();
+        Alert.alert("Error", errorData.message || "Failed to create chat");
+        return null;
+      }
+    } catch (error) {
+      console.error("Error creating chat:", error);
+      Alert.alert("Error", "Network error while creating chat");
+      return null;
+    }
+  };
+
+  // Add message to chat in backend
+  const addMessageToChat = async (
+    chatId: string,
+    message: Message
+  ): Promise<boolean> => {
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        Alert.alert("Error", "Authentication required");
+        return false;
+      }
+
+      const endpoint = formatEndpoint(API_CONFIG.ENDPOINTS.CHAT_MESSAGES, {
+        id: chatId,
+      });
+
+      const response = await apiCall(endpoint, {
+        method: "POST",
+        body: JSON.stringify({
+          chatId: chatId,
+          message: message,
+        }),
+      });
+
+      if (response.ok) {
+        return true;
+      } else {
+        const errorData = await response.json();
+        console.error("Failed to add message:", errorData);
+        return false;
+      }
+    } catch (error) {
+      console.error("Error adding message:", error);
+      return false;
+    }
+  };
+
+  // Delete chat from backend
+  const deleteChatInBackend = async (chatId: string): Promise<boolean> => {
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        Alert.alert("Error", "Authentication required");
+        return false;
+      }
+
+      const endpoint = `${API_CONFIG.ENDPOINTS.CHATS}/${chatId}`;
+      const response = await apiCall(endpoint, {
+        method: "DELETE",
+      });
+
+      if (response.ok) {
+        return true;
+      } else {
+        const errorData = await response.json();
+        Alert.alert("Error", errorData.message || "Failed to delete chat");
+        return false;
+      }
+    } catch (error) {
+      console.error("Error deleting chat:", error);
+      Alert.alert("Error", "Network error while deleting chat");
+      return false;
+    }
+  };
+
+  // Initialize - load chats on component mount
+  useEffect(() => {
+    loadChats();
   }, []);
 
   // Scroll to bottom when new messages arrive
   useEffect(() => {
-    if (conversation.length > 0) {
+    if (messages.length > 0) {
       setTimeout(
         () => scrollViewRef.current?.scrollToEnd({ animated: true }),
         100
       );
     }
-  }, [conversation.length]);
+  }, [messages.length]);
 
-  // Quick response handler for common queries
-  const getQuickResponse = useCallback((userInput: string): string | null => {
-    const lowerInput = userInput.toLowerCase().trim();
-    if (quickResponses[lowerInput]) return quickResponses[lowerInput];
-
-    for (const [key, response] of Object.entries(quickResponses)) {
-      if (lowerInput.includes(key) && key.length > 2) return response;
+  // Create new chat
+  const createNewChat = async () => {
+    const newChatTitle = "New Chat";
+    const newChat = await createChatInBackend(newChatTitle);
+    if (newChat) {
+      setCurrentChat(newChat);
+      setChats((prev) => [newChat, ...prev]);
+      setShowHistory(false);
     }
-    return null;
-  }, []);
+  };
 
-  // Send message to AI
-  const sendToAI = useCallback(
-    async (userInput: string) => {
-      if (!hasAvailableModels) {
-        Alert.alert(
-          "Error",
-          "No AI models available. Please check your connection."
+  // Select existing chat
+  const selectChat = async (chat: Chat) => {
+    try {
+      const token = await getAuthToken();
+      if (!token) return;
+
+      const endpoint = `${API_CONFIG.ENDPOINTS.CHATS}/${chat.id}`;
+      const response = await apiCall(endpoint, {
+        method: "GET",
+      });
+
+      if (response.ok) {
+        const fullChat = await response.json();
+        setCurrentChat({
+          id: fullChat._id,
+          _id: fullChat._id,
+          title: fullChat.title,
+          messages: fullChat.messages || [],
+          userId: fullChat.userId,
+          createdAt: fullChat.createdAt,
+          updatedAt: fullChat.updatedAt,
+        });
+        setShowHistory(false);
+      }
+    } catch (error) {
+      console.error("Error loading chat:", error);
+    }
+  };
+
+  // Delete chat
+  const deleteChat = async (chatId: string) => {
+    Alert.alert("Delete Chat", "Are you sure you want to delete this chat?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          const success = await deleteChatInBackend(chatId);
+          if (success) {
+            setChats((prev) => prev.filter((chat) => chat.id !== chatId));
+            if (currentChat?.id === chatId) {
+              setCurrentChat(null);
+            }
+          }
+        },
+      },
+    ]);
+  };
+
+  // Send message to AI and save to backend
+  const sendToAI = async (userInput: string) => {
+    if (!currentChat) {
+      await createNewChat();
+      // Wait a bit for the chat to be created
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    try {
+      setIsProcessing(true);
+
+      // Create user message
+      const userMessage: Message = {
+        id: Date.now().toString(),
+        role: "user",
+        content: userInput,
+        timestamp: new Date(),
+      };
+
+      // Add user message to current chat
+      const updatedMessages = [...(currentChat?.messages || []), userMessage];
+      setCurrentChat((prev) =>
+        prev ? { ...prev, messages: updatedMessages } : null
+      );
+
+      // Save user message to backend
+      if (currentChat) {
+        await addMessageToChat(currentChat.id, userMessage);
+      }
+
+      // Generate AI response
+      const responseText = await aiService.current.generateHumanizedResponse(
+        userInput
+      );
+
+      // Create assistant message
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: responseText,
+        timestamp: new Date(),
+      };
+
+      // Add assistant message to current chat
+      const finalMessages = [...updatedMessages, assistantMessage];
+      setCurrentChat((prev) =>
+        prev ? { ...prev, messages: finalMessages } : null
+      );
+
+      // Save assistant message to backend
+      if (currentChat) {
+        await addMessageToChat(currentChat.id, assistantMessage);
+      }
+
+      // Update chat title with first user message if it's still "New Chat"
+      if (
+        currentChat &&
+        currentChat.title === "New Chat" &&
+        finalMessages.length === 2
+      ) {
+        // Use first user message as title (truncated)
+        const firstUserMessage = finalMessages.find(
+          (msg) => msg.role === "user"
         );
-        return;
+        if (firstUserMessage) {
+          const newTitle =
+            firstUserMessage.content.length > 30
+              ? firstUserMessage.content.substring(0, 30) + "..."
+              : firstUserMessage.content;
+
+          setCurrentChat((prev) =>
+            prev ? { ...prev, title: newTitle } : null
+          );
+          setChats((prev) =>
+            prev.map((chat) =>
+              chat.id === currentChat.id ? { ...chat, title: newTitle } : chat
+            )
+          );
+
+          // Update title in backend (you would need to implement this endpoint)
+          // await updateChatTitleInBackend(currentChat.id, newTitle);
+        }
       }
-
-      try {
-        setIsProcessing(true);
-        const userMessage: Message = {
-          id: Date.now().toString(),
-          role: "user",
-          text: userInput,
-          timestamp: new Date(),
-        };
-        setConversation((prev) => [...prev, userMessage]);
-
-        const quickResponse = getQuickResponse(userInput);
-        const responseText =
-          quickResponse ||
-          (await aiService.current.generateHumanizedResponse(
-            currentModel,
-            userInput
-          ));
-
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: "assistant",
-          text: responseText,
-          timestamp: new Date(),
-        };
-        setConversation((prev) => [...prev, assistantMessage]);
-      } catch (error) {
-        console.error("Error calling AI:", error);
-        const errorMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: "assistant",
-          text: "Hmm, I'm having a bit of trouble right now. Could you try again in a moment?",
-          timestamp: new Date(),
-        };
-        setConversation((prev) => [...prev, errorMessage]);
-      } finally {
-        setIsProcessing(false);
-      }
-    },
-    [currentModel, hasAvailableModels, getQuickResponse]
-  );
+    } catch (error) {
+      console.error("Error in sendToAI:", error);
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content:
+          "Hmm, I'm having a bit of trouble right now. Could you try again in a moment?",
+        timestamp: new Date(),
+      };
+      setCurrentChat((prev) =>
+        prev
+          ? {
+              ...prev,
+              messages: [...(prev.messages || []), errorMessage],
+            }
+          : null
+      );
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   // Event handlers
   const handleTextSubmit = useCallback(() => {
-    if (textInput.trim() && !isProcessing && hasAvailableModels) {
+    if (textInput.trim() && !isProcessing) {
       sendToAI(textInput.trim());
       setTextInput("");
       Keyboard.dismiss();
     }
-  }, [textInput, isProcessing, hasAvailableModels, sendToAI]);
-
-  const clearConversation = useCallback(() => {
-    setConversation([]);
-    setSelectedMessage(null);
-  }, []);
+  }, [textInput, isProcessing, sendToAI]);
 
   const showModelInfo = useCallback(() => {
-    const title = hasAvailableModels ? "Connection Status" : "Connection Issue";
-    const message = hasAvailableModels
-      ? `✅ Connected to Gemini AI\n\nUsing model: ${currentModel}`
-      : "Unable to connect to Gemini AI. Please check your API key and internet connection.";
-    Alert.alert(title, message, [{ text: "OK" }]);
-  }, [hasAvailableModels, currentModel]);
+    Alert.alert("Connection Status", "✅ Connected to Gemini AI", [
+      { text: "OK" },
+    ]);
+  }, []);
 
   return (
     <View style={styles.container}>
@@ -566,7 +758,9 @@ export default function AssistantScreen() {
           onBack={() => router.back()}
           onToggleHistory={() => setShowHistory((prev) => !prev)}
           onShowModelInfo={showModelInfo}
+          onNewChat={createNewChat}
           showHistory={showHistory}
+          currentChat={currentChat}
         />
 
         <View style={styles.content}>
@@ -585,7 +779,7 @@ export default function AssistantScreen() {
               ]}
               showsVerticalScrollIndicator={false}
             >
-              {!hasConversation && (
+              {!currentChat && (
                 <View style={styles.welcomeContainer}>
                   <Text style={styles.welcomeTitle}>Hello! I'm YoVA 👋</Text>
                   <Text style={styles.welcomeSubtitle}>
@@ -595,7 +789,7 @@ export default function AssistantScreen() {
                 </View>
               )}
 
-              {conversation.map((message) => (
+              {messages.map((message) => (
                 <MessageBubble key={message.id} message={message} />
               ))}
 
@@ -604,7 +798,7 @@ export default function AssistantScreen() {
                   message={{
                     id: "thinking",
                     role: "assistant",
-                    text: "",
+                    content: "",
                     timestamp: new Date(),
                   }}
                   thinkingDots={thinkingDots}
@@ -613,13 +807,15 @@ export default function AssistantScreen() {
             </ScrollView>
           </View>
 
-          {/* History Sidebar */}
-          {showHistory && hasConversation && (
-            <HistorySidebar
-              conversation={conversation}
-              selectedMessage={selectedMessage}
-              onSelectMessage={setSelectedMessage}
+          {/* Chat History Sidebar */}
+          {showHistory && (
+            <ChatHistorySidebar
+              chats={chats}
+              currentChat={currentChat}
+              onSelectChat={selectChat}
+              onDeleteChat={deleteChat}
               onClose={() => setShowHistory(false)}
+              loading={loadingChats}
             />
           )}
         </View>
@@ -630,16 +826,14 @@ export default function AssistantScreen() {
           onTextChange={setTextInput}
           onSubmit={handleTextSubmit}
           isProcessing={isProcessing}
-          hasAvailableModels={hasAvailableModels}
-          onClear={clearConversation}
-          hasConversation={hasConversation}
+          hasAvailableModels={true}
         />
       </LinearGradient>
     </View>
   );
 }
 
-// Styles remain the same as original
+// Styles (updated for new components)
 const styles = StyleSheet.create({
   container: { flex: 1 },
   gradient: { flex: 1 },
@@ -659,7 +853,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  headerRight: { flexDirection: "row" },
+  headerRight: { flexDirection: "row", gap: 8 },
   headerCenter: { alignItems: "center" },
   headerTitle: { fontSize: 20, fontWeight: "700", color: "#F5C563" },
   headerSubtitle: {
@@ -754,12 +948,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   sendButtonDisabled: { backgroundColor: "#8B7965", opacity: 0.5 },
-  clearButton: {
-    alignSelf: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  clearButtonText: { color: "#8B7965", fontSize: 14, fontWeight: "500" },
   historyContainer: {
     width: width * 0.35,
     backgroundColor: "rgba(45, 37, 32, 0.9)",
@@ -793,6 +981,46 @@ const styles = StyleSheet.create({
     borderColor: "#F5C563",
     backgroundColor: "rgba(245, 197, 99, 0.1)",
   },
-  historyIcon: { fontSize: 12, marginRight: 8 },
-  historyText: { fontSize: 12, color: "#E8DDD3", lineHeight: 16, flex: 1 },
+  historyItemContent: { flex: 1 },
+  historyItemTitle: {
+    fontSize: 14,
+    color: "#E8DDD3",
+    fontWeight: "500",
+    marginBottom: 4,
+  },
+  historyItemDate: {
+    fontSize: 11,
+    color: "#8B7965",
+  },
+  deleteChatButton: {
+    padding: 4,
+    marginLeft: 8,
+  },
+  loadingState: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+  },
+  loadingText: {
+    fontSize: 12,
+    color: "#8B7965",
+    marginTop: 8,
+  },
+  emptyState: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: "#8B7965",
+    textAlign: "center",
+    fontStyle: "italic",
+    marginBottom: 4,
+  },
+  emptySubtext: {
+    fontSize: 12,
+    color: "#8B7965",
+    textAlign: "center",
+  },
 });

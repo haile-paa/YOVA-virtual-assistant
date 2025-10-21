@@ -10,14 +10,27 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  ActivityIndicator,
 } from "react-native";
-import uuid from "react-native-uuid";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+// API Configuration - Define once, use everywhere
+const API_CONFIG = {
+  BASE_URL: "http://192.168.1.2:8080/api",
+  ENDPOINTS: {
+    EVENTS: "/events",
+  },
+};
 
 interface ScheduleEvent {
+  _id?: string;
   id: string;
   title: string;
   day: string;
   time: string;
+  userId?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 interface ScheduleWidgetProps {
@@ -33,6 +46,153 @@ export default function ScheduleWidget({
   const [time, setTime] = useState("");
   const [showInputs, setShowInputs] = useState(true);
   const [sound, setSound] = useState<Audio.Sound | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [fetching, setFetching] = useState(true);
+
+  // Fetch events from backend on component mount
+  useEffect(() => {
+    fetchEvents();
+  }, []);
+
+  const getAuthToken = async (): Promise<string | null> => {
+    try {
+      return await AsyncStorage.getItem("userToken");
+    } catch (error) {
+      console.error("Error getting auth token:", error);
+      return null;
+    }
+  };
+
+  // Helper function to make API calls
+  const apiCall = async (endpoint: string, options: RequestInit = {}) => {
+    const token = await getAuthToken();
+
+    const defaultOptions: RequestInit = {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    };
+
+    const response = await fetch(`${API_CONFIG.BASE_URL}${endpoint}`, {
+      ...defaultOptions,
+      ...options,
+    });
+
+    return response;
+  };
+
+  const fetchEvents = async () => {
+    try {
+      setFetching(true);
+      const token = await getAuthToken();
+
+      if (!token) {
+        console.log("No auth token found");
+        setFetching(false);
+        return;
+      }
+
+      const response = await apiCall(API_CONFIG.ENDPOINTS.EVENTS, {
+        method: "GET",
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Transform backend data to match frontend interface
+        const transformedEvents = data.map((event: any) => ({
+          id: event._id || event.id,
+          _id: event._id,
+          title: event.title,
+          day: event.day,
+          time: event.time,
+          userId: event.userId,
+          createdAt: event.createdAt,
+          updatedAt: event.updatedAt,
+        }));
+        setEvents(transformedEvents);
+      } else {
+        console.error("Failed to fetch events:", response.status);
+      }
+    } catch (error) {
+      console.error("Error fetching events:", error);
+      Alert.alert("Error", "Failed to load events");
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const createEventInBackend = async (event: {
+    title: string;
+    day: string;
+    time: string;
+  }): Promise<ScheduleEvent | null> => {
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        Alert.alert("Error", "Authentication required");
+        return null;
+      }
+
+      const response = await apiCall(API_CONFIG.ENDPOINTS.EVENTS, {
+        method: "POST",
+        body: JSON.stringify({
+          title: event.title,
+          day: event.day,
+          time: event.time,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return {
+          id: data._id || data.id,
+          _id: data._id,
+          title: data.title,
+          day: data.day,
+          time: data.time,
+          userId: data.userId,
+          createdAt: data.createdAt,
+          updatedAt: data.updatedAt,
+        };
+      } else {
+        const errorData = await response.json();
+        Alert.alert("Error", errorData.message || "Failed to create event");
+        return null;
+      }
+    } catch (error) {
+      console.error("Error creating event:", error);
+      Alert.alert("Error", "Network error while creating event");
+      return null;
+    }
+  };
+
+  const deleteEventInBackend = async (id: string): Promise<boolean> => {
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        Alert.alert("Error", "Authentication required");
+        return false;
+      }
+
+      const response = await apiCall(`${API_CONFIG.ENDPOINTS.EVENTS}/${id}`, {
+        method: "DELETE",
+      });
+
+      if (response.ok) {
+        return true;
+      } else {
+        const errorData = await response.json();
+        Alert.alert("Error", errorData.message || "Failed to delete event");
+        return false;
+      }
+    } catch (error) {
+      console.error("Error deleting event:", error);
+      Alert.alert("Error", "Network error while deleting event");
+      return false;
+    }
+  };
 
   // Filter events based on search query
   const filteredEvents = searchQuery
@@ -71,7 +231,7 @@ export default function ScheduleWidget({
     };
   }, [sound]);
 
-  const addEvent = () => {
+  const addEvent = async () => {
     // ✅ TRIM THE INPUTS to remove spaces
     const trimmedTitle = title.trim();
     const trimmedDay = day.trim();
@@ -88,23 +248,42 @@ export default function ScheduleWidget({
       return;
     }
 
-    // ✅ Save trimmed values
-    const newEvent = {
-      id: uuid.v4().toString(),
-      title: trimmedTitle,
-      day: trimmedDay,
-      time: trimmedTime,
-    };
+    setLoading(true);
+    try {
+      const eventData = {
+        title: trimmedTitle,
+        day: trimmedDay,
+        time: trimmedTime,
+      };
 
-    setEvents([...events, newEvent]);
-    setTitle("");
-    setDay("");
-    setTime("");
-    setShowInputs(false);
+      const createdEvent = await createEventInBackend(eventData);
+
+      if (createdEvent) {
+        setEvents([...events, createdEvent]);
+        setTitle("");
+        setDay("");
+        setTime("");
+        setShowInputs(false);
+      }
+    } catch (error) {
+      console.error("Error in addEvent:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const deleteEvent = (id: string) => {
-    setEvents(events.filter((event) => event.id !== id));
+  const deleteEvent = async (id: string) => {
+    setLoading(true);
+    try {
+      const success = await deleteEventInBackend(id);
+      if (success) {
+        setEvents(events.filter((event) => event.id !== id));
+      }
+    } catch (error) {
+      console.error("Error in deleteEvent:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // ✅ Safe playAlarm function
@@ -254,6 +433,7 @@ export default function ScheduleWidget({
             onChangeText={setTitle}
             style={styles.input}
             placeholderTextColor='#8B7965'
+            editable={!loading}
           />
           <TextInput
             placeholder='Day (e.g., Monday)'
@@ -261,6 +441,7 @@ export default function ScheduleWidget({
             onChangeText={setDay}
             style={styles.input}
             placeholderTextColor='#8B7965'
+            editable={!loading}
           />
           <TextInput
             placeholder='Time (e.g., 10:00 AM)'
@@ -268,24 +449,44 @@ export default function ScheduleWidget({
             onChangeText={setTime}
             style={styles.input}
             placeholderTextColor='#8B7965'
+            editable={!loading}
           />
-          <TouchableOpacity style={styles.addButton} onPress={addEvent}>
-            <Text style={styles.addButtonText}>Add Event</Text>
+          <TouchableOpacity
+            style={[styles.addButton, loading && styles.disabledButton]}
+            onPress={addEvent}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator size='small' color='#F5C563' />
+            ) : (
+              <Text style={styles.addButtonText}>Add Event</Text>
+            )}
           </TouchableOpacity>
         </>
       ) : (
         <TouchableOpacity
           style={styles.showInputButton}
           onPress={() => setShowInputs(true)}
+          disabled={loading}
         >
           <Text style={styles.showInputText}>+ Add Event</Text>
         </TouchableOpacity>
       )}
 
-      {filteredEvents.length === 0 && searchQuery ? (
+      {fetching ? (
+        <View style={styles.loadingState}>
+          <ActivityIndicator size='small' color='#8B7965' />
+          <Text style={styles.loadingText}>Loading events...</Text>
+        </View>
+      ) : filteredEvents.length === 0 && searchQuery ? (
         <View style={styles.emptyState}>
           <Text style={styles.emptyText}>No matching events</Text>
           <Text style={styles.emptySubtext}>Try a different search term</Text>
+        </View>
+      ) : filteredEvents.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyText}>No events yet</Text>
+          <Text style={styles.emptySubtext}>Add your first event!</Text>
         </View>
       ) : (
         filteredEvents.map((event, index) => (
@@ -310,12 +511,22 @@ export default function ScheduleWidget({
                   {event.title}
                 </Text>
               </View>
-              <TouchableOpacity onPress={() => deleteEvent(event.id)}>
-                <MaterialIcons
-                  name='delete'
-                  size={22}
-                  color={index === 0 ? "#F5C563" : "#1A1410"}
-                />
+              <TouchableOpacity
+                onPress={() => deleteEvent(event.id)}
+                disabled={loading}
+              >
+                {loading ? (
+                  <ActivityIndicator
+                    size='small'
+                    color={index === 0 ? "#F5C563" : "#1A1410"}
+                  />
+                ) : (
+                  <MaterialIcons
+                    name='delete'
+                    size={22}
+                    color={index === 0 ? "#F5C563" : "#1A1410"}
+                  />
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -352,6 +563,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 20,
   },
+  disabledButton: {
+    opacity: 0.6,
+  },
   addButtonText: { color: "#F5C563", fontWeight: "700" },
   showInputButton: { alignSelf: "flex-start", marginBottom: 16 },
   showInputText: { color: "#1A1410", fontWeight: "700", fontSize: 16 },
@@ -366,6 +580,16 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+  },
+  loadingState: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+  },
+  loadingText: {
+    fontSize: 12,
+    color: "#8B7965",
+    marginTop: 8,
   },
   emptyState: {
     alignItems: "center",

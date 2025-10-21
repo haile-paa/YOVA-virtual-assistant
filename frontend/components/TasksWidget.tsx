@@ -13,13 +13,27 @@ import {
   TouchableOpacity,
   TouchableWithoutFeedback,
   View,
+  ActivityIndicator,
 } from "react-native";
-import uuid from "react-native-uuid";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+// API Configuration - Define once, use everywhere
+const API_CONFIG = {
+  BASE_URL: "http://192.168.1.2:8080/api",
+  ENDPOINTS: {
+    TASKS: "/tasks",
+    CLEAR_COMPLETED: "/tasks/clear-completed",
+  },
+};
 
 interface Task {
+  _id?: string;
   id: string;
   title: string;
   is_completed: boolean;
+  userId?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 interface TasksWidgetProps {
@@ -35,6 +49,209 @@ export default function TasksWidget({
   const [showInput, setShowInput] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [fetching, setFetching] = useState(true);
+
+  // Fetch tasks from backend on component mount
+  useEffect(() => {
+    fetchTasks();
+  }, []);
+
+  const getAuthToken = async (): Promise<string | null> => {
+    try {
+      return await AsyncStorage.getItem("userToken");
+    } catch (error) {
+      console.error("Error getting auth token:", error);
+      return null;
+    }
+  };
+
+  // Helper function to make API calls
+  const apiCall = async (endpoint: string, options: RequestInit = {}) => {
+    const token = await getAuthToken();
+
+    const defaultOptions: RequestInit = {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    };
+
+    const response = await fetch(`${API_CONFIG.BASE_URL}${endpoint}`, {
+      ...defaultOptions,
+      ...options,
+    });
+
+    return response;
+  };
+
+  const fetchTasks = async () => {
+    try {
+      setFetching(true);
+      const token = await getAuthToken();
+
+      if (!token) {
+        console.log("No auth token found");
+        setFetching(false);
+        return;
+      }
+
+      const response = await apiCall(API_CONFIG.ENDPOINTS.TASKS, {
+        method: "GET",
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Transform backend data to match frontend interface
+        const transformedTasks = data.map((task: any) => ({
+          id: task._id || task.id,
+          _id: task._id,
+          title: task.title,
+          is_completed: task.is_completed,
+          userId: task.userId,
+          createdAt: task.createdAt,
+          updatedAt: task.updatedAt,
+        }));
+        setTasks(transformedTasks);
+      } else {
+        console.error("Failed to fetch tasks:", response.status);
+      }
+    } catch (error) {
+      console.error("Error fetching tasks:", error);
+      Alert.alert("Error", "Failed to load tasks");
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const createTaskInBackend = async (task: {
+    title: string;
+  }): Promise<Task | null> => {
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        Alert.alert("Error", "Authentication required");
+        return null;
+      }
+
+      const response = await apiCall(API_CONFIG.ENDPOINTS.TASKS, {
+        method: "POST",
+        body: JSON.stringify({
+          title: task.title,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return {
+          id: data._id || data.id,
+          _id: data._id,
+          title: data.title,
+          is_completed: data.is_completed,
+          userId: data.userId,
+          createdAt: data.createdAt,
+          updatedAt: data.updatedAt,
+        };
+      } else {
+        const errorData = await response.json();
+        Alert.alert("Error", errorData.message || "Failed to create task");
+        return null;
+      }
+    } catch (error) {
+      console.error("Error creating task:", error);
+      Alert.alert("Error", "Network error while creating task");
+      return null;
+    }
+  };
+
+  const updateTaskInBackend = async (
+    id: string,
+    task: { title: string; is_completed: boolean }
+  ): Promise<boolean> => {
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        Alert.alert("Error", "Authentication required");
+        return false;
+      }
+
+      const response = await apiCall(`${API_CONFIG.ENDPOINTS.TASKS}/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          title: task.title,
+          is_completed: task.is_completed,
+        }),
+      });
+
+      if (response.ok) {
+        return true;
+      } else {
+        const errorData = await response.json();
+        Alert.alert("Error", errorData.message || "Failed to update task");
+        return false;
+      }
+    } catch (error) {
+      console.error("Error updating task:", error);
+      Alert.alert("Error", "Network error while updating task");
+      return false;
+    }
+  };
+
+  const deleteTaskInBackend = async (id: string): Promise<boolean> => {
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        Alert.alert("Error", "Authentication required");
+        return false;
+      }
+
+      const response = await apiCall(`${API_CONFIG.ENDPOINTS.TASKS}/${id}`, {
+        method: "DELETE",
+      });
+
+      if (response.ok) {
+        return true;
+      } else {
+        const errorData = await response.json();
+        Alert.alert("Error", errorData.message || "Failed to delete task");
+        return false;
+      }
+    } catch (error) {
+      console.error("Error deleting task:", error);
+      Alert.alert("Error", "Network error while deleting task");
+      return false;
+    }
+  };
+
+  const clearCompletedInBackend = async (): Promise<boolean> => {
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        Alert.alert("Error", "Authentication required");
+        return false;
+      }
+
+      const response = await apiCall(API_CONFIG.ENDPOINTS.CLEAR_COMPLETED, {
+        method: "DELETE",
+      });
+
+      if (response.ok) {
+        return true;
+      } else {
+        const errorData = await response.json();
+        Alert.alert(
+          "Error",
+          errorData.message || "Failed to clear completed tasks"
+        );
+        return false;
+      }
+    } catch (error) {
+      console.error("Error clearing completed tasks:", error);
+      Alert.alert("Error", "Network error while clearing completed tasks");
+      return false;
+    }
+  };
 
   // Filter tasks based on search query
   const filteredTasks = searchQuery
@@ -83,47 +300,105 @@ export default function TasksWidget({
     return taskExamples[randomIndex];
   };
 
-  const addTask = () => {
+  const addTask = async () => {
     if (!newTaskTitle.trim()) {
       Alert.alert("Missing info", "Please enter a task title.");
       return;
     }
 
-    const newTask: Task = {
-      id: uuid.v4().toString(),
-      title: newTaskTitle.trim(),
-      is_completed: false,
-    };
+    setLoading(true);
+    try {
+      const taskData = {
+        title: newTaskTitle.trim(),
+      };
 
-    setTasks([newTask, ...tasks]);
-    setNewTaskTitle("");
-    setShowInput(false);
-    Keyboard.dismiss();
+      const createdTask = await createTaskInBackend(taskData);
+
+      if (createdTask) {
+        setTasks([createdTask, ...tasks]);
+        setNewTaskTitle("");
+        setShowInput(false);
+        Keyboard.dismiss();
+      }
+    } catch (error) {
+      console.error("Error in addTask:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const toggleTask = (id: string) => {
-    setTasks(
-      tasks.map((task) =>
-        task.id === id ? { ...task, is_completed: !task.is_completed } : task
-      )
-    );
+  const toggleTask = async (id: string) => {
+    const task = tasks.find((t) => t.id === id);
+    if (!task) return;
+
+    setLoading(true);
+    try {
+      const success = await updateTaskInBackend(id, {
+        title: task.title,
+        is_completed: !task.is_completed,
+      });
+
+      if (success) {
+        setTasks(
+          tasks.map((task) =>
+            task.id === id
+              ? { ...task, is_completed: !task.is_completed }
+              : task
+          )
+        );
+      }
+    } catch (error) {
+      console.error("Error in toggleTask:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const deleteTask = (id: string) => {
-    setTasks(tasks.filter((task) => task.id !== id));
+  const deleteTask = async (id: string) => {
+    setLoading(true);
+    try {
+      const success = await deleteTaskInBackend(id);
+      if (success) {
+        setTasks(tasks.filter((task) => task.id !== id));
+      }
+    } catch (error) {
+      console.error("Error in deleteTask:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const clearCompleted = () => {
-    setTasks(tasks.filter((task) => !task.is_completed));
+  const clearCompleted = async () => {
+    setLoading(true);
+    try {
+      const success = await clearCompletedInBackend();
+      if (success) {
+        setTasks(tasks.filter((task) => !task.is_completed));
+      }
+    } catch (error) {
+      console.error("Error in clearCompleted:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const addExampleTask = () => {
-    const exampleTask: Task = {
-      id: uuid.v4().toString(),
-      title: getRandomExample(),
-      is_completed: false,
-    };
-    setTasks([exampleTask, ...tasks]);
+  const addExampleTask = async () => {
+    setLoading(true);
+    try {
+      const taskData = {
+        title: getRandomExample(),
+      };
+
+      const createdTask = await createTaskInBackend(taskData);
+
+      if (createdTask) {
+        setTasks([createdTask, ...tasks]);
+      }
+    } catch (error) {
+      console.error("Error in addExampleTask:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleShowInput = () => {
@@ -169,24 +444,39 @@ export default function TasksWidget({
                 <TouchableOpacity
                   onPress={clearCompleted}
                   style={styles.clearButton}
+                  disabled={loading}
                 >
-                  <MaterialIcons name='clear-all' size={18} color='#8B7965' />
+                  {loading ? (
+                    <ActivityIndicator size='small' color='#8B7965' />
+                  ) : (
+                    <MaterialIcons name='clear-all' size={18} color='#8B7965' />
+                  )}
                 </TouchableOpacity>
               )}
               <TouchableOpacity
                 onPress={addExampleTask}
                 style={styles.exampleButton}
+                disabled={loading}
               >
-                <MaterialIcons name='lightbulb' size={20} color='#1A1410' />
+                {loading ? (
+                  <ActivityIndicator size='small' color='#1A1410' />
+                ) : (
+                  <MaterialIcons name='lightbulb' size={20} color='#1A1410' />
+                )}
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={showInput ? handleCloseInput : handleShowInput}
+                disabled={loading}
               >
-                <MaterialIcons
-                  name={showInput ? "close" : "add"}
-                  size={24}
-                  color='#1A1410'
-                />
+                {loading ? (
+                  <ActivityIndicator size='small' color='#1A1410' />
+                ) : (
+                  <MaterialIcons
+                    name={showInput ? "close" : "add"}
+                    size={24}
+                    color='#1A1410'
+                  />
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -202,16 +492,30 @@ export default function TasksWidget({
                 onSubmitEditing={addTask}
                 autoFocus={true}
                 returnKeyType='done'
+                editable={!loading}
               />
-              <TouchableOpacity style={styles.addButton} onPress={addTask}>
-                <Text style={styles.addButtonText}>Add</Text>
+              <TouchableOpacity
+                style={[styles.addButton, loading && styles.disabledButton]}
+                onPress={addTask}
+                disabled={loading}
+              >
+                {loading ? (
+                  <ActivityIndicator size='small' color='#F5C563' />
+                ) : (
+                  <Text style={styles.addButtonText}>Add</Text>
+                )}
               </TouchableOpacity>
             </View>
           )}
 
           {/* Main content area */}
           <View style={styles.contentArea}>
-            {filteredTasks.length === 0 && !showInput ? (
+            {fetching ? (
+              <View style={styles.loadingState}>
+                <ActivityIndicator size='small' color='#8B7965' />
+                <Text style={styles.loadingText}>Loading tasks...</Text>
+              </View>
+            ) : filteredTasks.length === 0 && !showInput ? (
               <View style={styles.emptyState}>
                 <Text style={styles.emptyText}>
                   {searchQuery ? "No matching tasks" : "No tasks yet"}
@@ -245,8 +549,11 @@ export default function TasksWidget({
                     <TouchableOpacity
                       style={styles.checkboxContainer}
                       onPress={() => toggleTask(task.id)}
+                      disabled={loading}
                     >
-                      {task.is_completed ? (
+                      {loading ? (
+                        <ActivityIndicator size='small' color='#1A1410' />
+                      ) : task.is_completed ? (
                         <CheckSquare
                           size={20}
                           color='#1A1410'
@@ -268,8 +575,17 @@ export default function TasksWidget({
                     <TouchableOpacity
                       onPress={() => deleteTask(task.id)}
                       style={styles.deleteButton}
+                      disabled={loading}
                     >
-                      <MaterialIcons name='delete' size={16} color='#8B7965' />
+                      {loading ? (
+                        <ActivityIndicator size='small' color='#8B7965' />
+                      ) : (
+                        <MaterialIcons
+                          name='delete'
+                          size={16}
+                          color='#8B7965'
+                        />
+                      )}
                     </TouchableOpacity>
                   </View>
                 ))}
@@ -340,6 +656,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     minHeight: 40,
   },
+  disabledButton: {
+    opacity: 0.6,
+  },
   addButtonText: {
     color: "#F5C563",
     fontWeight: "600",
@@ -386,6 +705,16 @@ const styles = StyleSheet.create({
   },
   exampleButton: {
     padding: 4,
+  },
+  loadingState: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+  },
+  loadingText: {
+    fontSize: 12,
+    color: "#8B7965",
   },
   emptyState: {
     flex: 1,
