@@ -40,6 +40,7 @@ func main() {
 	notes.Use(middleware.AuthMiddleware)
 	notes.HandleFunc("", handlers.GetNotes).Methods("GET")
 	notes.HandleFunc("", handlers.CreateNote).Methods("POST")
+	notes.HandleFunc("/clear-all", handlers.DeleteAllNotes).Methods("DELETE")
 	notes.HandleFunc("/{id}", handlers.GetNote).Methods("GET")
 	notes.HandleFunc("/{id}", handlers.UpdateNote).Methods("PUT")
 	notes.HandleFunc("/{id}", handlers.DeleteNote).Methods("DELETE")
@@ -49,19 +50,25 @@ func main() {
 	events.Use(middleware.AuthMiddleware)
 	events.HandleFunc("", handlers.GetEvents).Methods("GET")
 	events.HandleFunc("", handlers.CreateEvent).Methods("POST")
+	events.HandleFunc("/clear-all", handlers.DeleteAllEvents).Methods("DELETE")
 	events.HandleFunc("/{id}", handlers.GetEvent).Methods("GET")
 	events.HandleFunc("/{id}", handlers.UpdateEvent).Methods("PUT")
 	events.HandleFunc("/{id}", handlers.DeleteEvent).Methods("DELETE")
 
 	// Tasks routes - protected
+	// NOTE: "/clear-completed" and "/clear-all" must be registered before "/{id}" - gorilla/mux
+	// matches routes in registration order, and "/{id}" matches ANY path
+	// segment (including literal strings like "clear-completed"/"clear-all"), so the
+	// wildcard route would otherwise shadow these.
 	tasks := r.PathPrefix("/api/tasks").Subrouter()
 	tasks.Use(middleware.AuthMiddleware)
 	tasks.HandleFunc("", handlers.GetTasks).Methods("GET")
 	tasks.HandleFunc("", handlers.CreateTask).Methods("POST")
+	tasks.HandleFunc("/clear-completed", handlers.DeleteCompletedTasks).Methods("DELETE")
+	tasks.HandleFunc("/clear-all", handlers.DeleteAllTasks).Methods("DELETE")
 	tasks.HandleFunc("/{id}", handlers.GetTask).Methods("GET")
 	tasks.HandleFunc("/{id}", handlers.UpdateTask).Methods("PUT")
 	tasks.HandleFunc("/{id}", handlers.DeleteTask).Methods("DELETE")
-	tasks.HandleFunc("/clear-completed", handlers.DeleteCompletedTasks).Methods("DELETE")
 
 	// Chats routes - protected
 	chats := r.PathPrefix("/api/chats").Subrouter()
@@ -73,21 +80,22 @@ func main() {
 	chats.HandleFunc("/{id}", handlers.DeleteChat).Methods("DELETE")
 	chats.HandleFunc("/{id}/messages", handlers.AddMessage).Methods("POST")
 
-	// CORS middleware
-	// r.Use(func(next http.Handler) http.Handler {
-	// 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	// 		w.Header().Set("Access-Control-Allow-Origin", "*")
-	// 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-	// 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	// CORS middleware - needed for the Expo web build and any browser-based client.
+	// Native mobile requests aren't affected either way, so this is safe to enable.
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
-	// 		if r.Method == "OPTIONS" {
-	// 			w.WriteHeader(http.StatusOK)
-	// 			return
-	// 		}
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
 
-	// 		next.ServeHTTP(w, r)
-	// 	})
-	// })
+			next.ServeHTTP(w, r)
+		})
+	})
 
 	port := os.Getenv("PORT")
 	if port == "" {

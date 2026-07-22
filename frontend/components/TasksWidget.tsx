@@ -16,10 +16,11 @@ import {
   ActivityIndicator,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { handleSessionExpired } from "../utils/session";
 
 // API Configuration - Define once, use everywhere
 const API_CONFIG = {
-  BASE_URL: "http://192.168.1.2:8080/api",
+  BASE_URL: "https://yova-virtual-assistant.onrender.com/api",
   ENDPOINTS: {
     TASKS: "/tasks",
     CLEAR_COMPLETED: "/tasks/clear-completed",
@@ -82,6 +83,13 @@ export default function TasksWidget({
       ...defaultOptions,
       ...options,
     });
+
+    if (response.status === 401) {
+      // Session expired or token invalid - clear it and send the user
+      // back to onboarding/login. This is an expected, routine condition,
+      // so we don't surface it as an error to the user.
+      await handleSessionExpired();
+    }
 
     return response;
   };
@@ -167,7 +175,7 @@ export default function TasksWidget({
 
   const updateTaskInBackend = async (
     id: string,
-    task: { title: string; is_completed: boolean }
+    task: { title: string; is_completed: boolean },
   ): Promise<boolean> => {
     try {
       const token = await getAuthToken();
@@ -242,7 +250,7 @@ export default function TasksWidget({
         const errorData = await response.json();
         Alert.alert(
           "Error",
-          errorData.message || "Failed to clear completed tasks"
+          errorData.message || "Failed to clear completed tasks",
         );
         return false;
       }
@@ -256,7 +264,7 @@ export default function TasksWidget({
   // Filter tasks based on search query
   const filteredTasks = searchQuery
     ? tasks.filter((task) =>
-        task.title.toLowerCase().includes(searchQuery.toLowerCase())
+        task.title.toLowerCase().includes(searchQuery.toLowerCase()),
       )
     : tasks;
 
@@ -264,11 +272,11 @@ export default function TasksWidget({
   useEffect(() => {
     const keyboardDidShowListener = Keyboard.addListener(
       Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
-      () => setKeyboardVisible(true)
+      () => setKeyboardVisible(true),
     );
     const keyboardDidHideListener = Keyboard.addListener(
       Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
-      () => setKeyboardVisible(false)
+      () => setKeyboardVisible(false),
     );
 
     return () => {
@@ -343,8 +351,8 @@ export default function TasksWidget({
           tasks.map((task) =>
             task.id === id
               ? { ...task, is_completed: !task.is_completed }
-              : task
-          )
+              : task,
+          ),
         );
       }
     } catch (error) {
@@ -412,7 +420,7 @@ export default function TasksWidget({
   };
 
   const completedCount = filteredTasks.filter(
-    (task) => task.is_completed
+    (task) => task.is_completed,
   ).length;
   const totalCount = filteredTasks.length;
 

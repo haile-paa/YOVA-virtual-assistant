@@ -301,3 +301,36 @@ func DeleteCompletedTasks(w http.ResponseWriter, r *http.Request) {
 		"deletedCount": result.DeletedCount,
 	})
 }
+
+// DeleteAllTasks deletes every task belonging to the authenticated user,
+// regardless of completion status. Backs the "Clear All Data" action in
+// Settings (distinct from DeleteCompletedTasks, which only clears completed ones).
+func DeleteAllTasks(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value("userID").(string)
+	if !ok {
+		http.Error(w, `{"error": "User not authenticated"}`, http.StatusUnauthorized)
+		return
+	}
+
+	userObjID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		http.Error(w, `{"error": "Invalid user ID"}`, http.StatusBadRequest)
+		return
+	}
+
+	collection := database.GetCollection("tasks")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	result, err := collection.DeleteMany(ctx, bson.M{"userId": userObjID})
+	if err != nil {
+		http.Error(w, `{"error": "Failed to clear tasks"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":      "All tasks cleared successfully",
+		"deletedCount": result.DeletedCount,
+	})
+}

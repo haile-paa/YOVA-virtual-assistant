@@ -32,7 +32,7 @@ import { useState, useEffect } from "react";
 
 // API Configuration - Define once, use everywhere
 const API_CONFIG = {
-  BASE_URL: "http://192.168.1.3:8080/api",
+  BASE_URL: "https://yova-virtual-assistant.onrender.com/api",
   ENDPOINTS: {
     NOTES: "/notes",
     TASKS: "/tasks",

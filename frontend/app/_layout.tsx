@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import OnboardingScreen from "./onboarding";
+import { onSessionExpired } from "../utils/session";
 
 export default function RootLayout() {
   const [isLoading, setIsLoading] = useState(true);
@@ -11,6 +12,15 @@ export default function RootLayout() {
 
   useEffect(() => {
     checkAuthStatus();
+
+    // If a widget detects an expired/invalid token (401), it clears storage
+    // and emits this event. React by dropping the token from state, which
+    // sends the user back to the onboarding/login screen automatically.
+    const unsubscribe = onSessionExpired(() => {
+      setUserToken(null);
+    });
+
+    return unsubscribe;
   }, []);
 
   const checkAuthStatus = async () => {
@@ -30,7 +40,10 @@ export default function RootLayout() {
   };
 
   const handleOnboardingComplete = () => {
-    setIsOnboardingComplete(true);
+    // Re-read both flags from storage - onboarding may have just saved a
+    // new token (login/signup) or none at all (skip), so a plain
+    // isOnboardingComplete flip isn't enough on its own.
+    checkAuthStatus();
   };
 
   if (isLoading) {

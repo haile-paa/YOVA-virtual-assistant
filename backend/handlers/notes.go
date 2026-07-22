@@ -268,3 +268,35 @@ func DeleteNote(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": "Note deleted successfully"})
 }
+
+// DeleteAllNotes deletes every note belonging to the authenticated user.
+// Backs the "Clear All Data" action in Settings.
+func DeleteAllNotes(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value("userID").(string)
+	if !ok {
+		http.Error(w, `{"error": "User not authenticated"}`, http.StatusUnauthorized)
+		return
+	}
+
+	userObjID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		http.Error(w, `{"error": "Invalid user ID"}`, http.StatusBadRequest)
+		return
+	}
+
+	collection := database.GetCollection("notes")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	result, err := collection.DeleteMany(ctx, bson.M{"userId": userObjID})
+	if err != nil {
+		http.Error(w, `{"error": "Failed to clear notes"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":      "All notes cleared successfully",
+		"deletedCount": result.DeletedCount,
+	})
+}

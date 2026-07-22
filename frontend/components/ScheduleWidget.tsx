@@ -13,10 +13,11 @@ import {
   ActivityIndicator,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { handleSessionExpired } from "../utils/session";
 
 // API Configuration - Define once, use everywhere
 const API_CONFIG = {
-  BASE_URL: "http://192.168.1.2:8080/api",
+  BASE_URL: "https://yova-virtual-assistant.onrender.com/api",
   ENDPOINTS: {
     EVENTS: "/events",
   },
@@ -79,6 +80,13 @@ export default function ScheduleWidget({
       ...defaultOptions,
       ...options,
     });
+
+    if (response.status === 401) {
+      // Session expired or token invalid - clear it and send the user
+      // back to onboarding/login. This is an expected, routine condition,
+      // so we don't surface it as an error to the user.
+      await handleSessionExpired();
+    }
 
     return response;
   };
@@ -200,7 +208,7 @@ export default function ScheduleWidget({
         (event) =>
           event.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
           event.day.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          event.time.toLowerCase().includes(searchQuery.toLowerCase())
+          event.time.toLowerCase().includes(searchQuery.toLowerCase()),
       )
     : events;
 
@@ -214,7 +222,7 @@ export default function ScheduleWidget({
     (async () => {
       try {
         const { sound } = await Audio.Sound.createAsync(
-          require("../assets/alarm.mp3")
+          require("../assets/alarm.mp3"),
         );
         setSound(sound);
       } catch (error) {
@@ -411,7 +419,7 @@ export default function ScheduleWidget({
           if (diff === 30) {
             await scheduleNotification(
               "Upcoming Event",
-              `${event.title} is in 30 minutes`
+              `${event.title} is in 30 minutes`,
             );
           }
         }

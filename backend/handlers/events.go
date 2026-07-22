@@ -270,3 +270,35 @@ func DeleteEvent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": "Event deleted successfully"})
 }
+
+// DeleteAllEvents deletes every event belonging to the authenticated user.
+// Backs the "Clear All Data" action in Settings.
+func DeleteAllEvents(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value("userID").(string)
+	if !ok {
+		http.Error(w, `{"error": "User not authenticated"}`, http.StatusUnauthorized)
+		return
+	}
+
+	userObjID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		http.Error(w, `{"error": "Invalid user ID"}`, http.StatusBadRequest)
+		return
+	}
+
+	collection := database.GetCollection("events")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	result, err := collection.DeleteMany(ctx, bson.M{"userId": userObjID})
+	if err != nil {
+		http.Error(w, `{"error": "Failed to clear events"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":      "All events cleared successfully",
+		"deletedCount": result.DeletedCount,
+	})
+}

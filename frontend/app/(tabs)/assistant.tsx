@@ -8,7 +8,7 @@ import {
   Plus,
   Trash2,
 } from "lucide-react-native";
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -27,10 +27,10 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // API Configuration - Define once, use everywhere
 const API_CONFIG = {
-  BASE_URL: "http://192.168.1.2:8080/api",
+  BASE_URL: "https://yova-virtual-assistant.onrender.com/api",
   ENDPOINTS: {
     CHATS: "/chats",
-    CHAT_MESSAGES: "/chats/{id}/messages",
+    CHAT_MESSAGES: "/chats/{id}",
   },
 };
 
@@ -90,7 +90,7 @@ const useKeyboard = () => {
 
 const useTypingEffect = (text: string, isActive: boolean) => {
   const [displayedText, setDisplayedText] = useState("");
-  const typingIntervalRef = useRef<number | null>(null);
+  const typingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!isActive || !text) {
@@ -108,7 +108,7 @@ const useTypingEffect = (text: string, isActive: boolean) => {
       } else {
         typingIntervalRef.current && clearInterval(typingIntervalRef.current);
       }
-    }, 20) as unknown as number;
+    }, 20);
 
     return () => {
       typingIntervalRef.current && clearInterval(typingIntervalRef.current);
@@ -165,12 +165,19 @@ class HumanizedAIService {
   }
 
   private createHumanizedPrompt(userInput: string): string {
-    return `Respond naturally and conversationally. Be friendly, concise, and avoid robotic language. Use contractions and show personality. User's message: "${userInput}"`;
+    return `You are YoVA (Your Virtual Assistant), a friendly and helpful AI assistant. Respond naturally and conversationally. Be friendly, concise, and avoid robotic language. Use contractions and show personality. Keep responses under 200 words when possible.
+
+User's message: "${userInput}"`;
   }
 
   private postProcessResponse(text: string, userInput: string): string {
     let processed = text.trim();
     processed = processed.charAt(0).toUpperCase() + processed.slice(1);
+
+    // Remove any markdown formatting or special characters that might cause issues
+    processed = processed.replace(/\*\*(.*?)\*\*/g, "$1"); // Remove bold
+    processed = processed.replace(/\*(.*?)\*/g, "$1"); // Remove italics
+
     return processed;
   }
 }
@@ -190,7 +197,7 @@ const Header = ({
     </TouchableOpacity>
     <View style={styles.headerCenter}>
       <Text style={styles.headerTitle}>YoVA</Text>
-      <Text style={styles.headerSubtitle}>
+      <Text style={styles.headerSubtitle} numberOfLines={1}>
         {currentChat?.title || "New Chat"}
       </Text>
     </View>
@@ -293,7 +300,10 @@ const ChatHistorySidebar = ({
               </Text>
             </View>
             <TouchableOpacity
-              onPress={() => onDeleteChat(chat.id)}
+              onPress={(e) => {
+                e.stopPropagation(); // Prevent triggering onSelectChat
+                onDeleteChat(chat.id);
+              }}
               style={styles.deleteChatButton}
             >
               <Trash2 size={16} color='#8B7965' />
@@ -312,12 +322,24 @@ const InputBar = ({
   isProcessing,
   hasAvailableModels,
 }: any) => {
-  const handleSubmit = useCallback(() => onSubmit(), [onSubmit]);
+  const { isKeyboardVisible } = useKeyboard();
+
+  const handleSubmit = useCallback(() => {
+    if (textInput.trim() && !isProcessing && hasAvailableModels) {
+      onSubmit();
+    }
+  }, [textInput, isProcessing, hasAvailableModels, onSubmit]);
+
   const isSendDisabled =
     !textInput.trim() || isProcessing || !hasAvailableModels;
 
   return (
-    <View style={styles.inputBar}>
+    <View
+      style={[
+        styles.inputBar,
+        isKeyboardVisible && styles.inputBarKeyboardOpen,
+      ]}
+    >
       <View style={styles.inputContainer}>
         <TextInput
           style={styles.textInput}
@@ -328,13 +350,15 @@ const InputBar = ({
           multiline
           editable={!isProcessing && hasAvailableModels}
           onSubmitEditing={handleSubmit}
+          returnKeyType='send'
+          blurOnSubmit={false}
         />
         <TouchableOpacity
           style={[
             styles.sendButton,
             isSendDisabled && styles.sendButtonDisabled,
           ]}
-          onPress={onSubmit}
+          onPress={handleSubmit}
           disabled={isSendDisabled}
         >
           {isProcessing ? (
@@ -357,6 +381,7 @@ export default function AssistantScreen() {
   const [showHistory, setShowHistory] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [loadingChats, setLoadingChats] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   // Refs and hooks
   const scrollViewRef = useRef<ScrollView>(null);
@@ -366,12 +391,12 @@ export default function AssistantScreen() {
   // Derived states
   const messages = currentChat?.messages || [];
   const lastMessage = messages[messages.length - 1];
+  const isLastMessageFromAssistant = lastMessage?.role === "assistant";
   const displayedText = useTypingEffect(
     lastMessage?.content || "",
-    !isProcessing && messages.length > 0
+    !isProcessing && isLastMessageFromAssistant
   );
   const thinkingDots = useThinkingAnimation(isProcessing);
-  const contentPaddingBottom = isKeyboardVisible ? keyboardHeight + 80 : 100;
 
   // Get auth token
   const getAuthToken = async (): Promise<string | null> => {
@@ -400,6 +425,12 @@ export default function AssistantScreen() {
       ...options,
     });
 
+    if (!response.ok) {
+      throw new Error(
+        `API call failed: ${response.status} ${response.statusText}`
+      );
+    }
+
     return response;
   };
 
@@ -427,37 +458,38 @@ export default function AssistantScreen() {
         method: "GET",
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        const transformedChats = data.map((chat: any) => ({
-          id: chat._id,
-          _id: chat._id,
-          title: chat.title,
-          messages: chat.messages || [],
-          userId: chat.userId,
-          createdAt: chat.createdAt,
-          updatedAt: chat.updatedAt,
-        }));
-        setChats(transformedChats);
-      } else {
-        console.error("Failed to fetch chats:", response.status);
+      const data = await response.json();
+      const transformedChats = data.map((chat: any) => ({
+        id: chat._id,
+        _id: chat._id,
+        title: chat.title,
+        messages: chat.messages || [],
+        userId: chat.userId,
+        createdAt: chat.createdAt,
+        updatedAt: chat.updatedAt,
+      }));
+
+      setChats(transformedChats);
+
+      // If there are chats and no current chat is selected, select the most recent one
+      if (transformedChats.length > 0 && !currentChat) {
+        setCurrentChat(transformedChats[0]);
       }
     } catch (error) {
       console.error("Error fetching chats:", error);
+      Alert.alert(
+        "Error",
+        "Failed to load chats. Please check your connection."
+      );
     } finally {
       setLoadingChats(false);
+      setIsInitialized(true);
     }
   };
 
   // Create new chat in backend
   const createChatInBackend = async (title: string): Promise<Chat | null> => {
     try {
-      const token = await getAuthToken();
-      if (!token) {
-        Alert.alert("Error", "Authentication required");
-        return null;
-      }
-
       const response = await apiCall(API_CONFIG.ENDPOINTS.CHATS, {
         method: "POST",
         body: JSON.stringify({
@@ -465,25 +497,19 @@ export default function AssistantScreen() {
         }),
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        return {
-          id: data._id,
-          _id: data._id,
-          title: data.title,
-          messages: data.messages || [],
-          userId: data.userId,
-          createdAt: data.createdAt,
-          updatedAt: data.updatedAt,
-        };
-      } else {
-        const errorData = await response.json();
-        Alert.alert("Error", errorData.message || "Failed to create chat");
-        return null;
-      }
+      const data = await response.json();
+      return {
+        id: data._id,
+        _id: data._id,
+        title: data.title,
+        messages: data.messages || [],
+        userId: data.userId,
+        createdAt: data.createdAt,
+        updatedAt: data.updatedAt,
+      };
     } catch (error) {
       console.error("Error creating chat:", error);
-      Alert.alert("Error", "Network error while creating chat");
+      Alert.alert("Error", "Failed to create chat. Please try again.");
       return null;
     }
   };
@@ -494,12 +520,6 @@ export default function AssistantScreen() {
     message: Message
   ): Promise<boolean> => {
     try {
-      const token = await getAuthToken();
-      if (!token) {
-        Alert.alert("Error", "Authentication required");
-        return false;
-      }
-
       const endpoint = formatEndpoint(API_CONFIG.ENDPOINTS.CHAT_MESSAGES, {
         id: chatId,
       });
@@ -507,20 +527,34 @@ export default function AssistantScreen() {
       const response = await apiCall(endpoint, {
         method: "POST",
         body: JSON.stringify({
-          chatId: chatId,
-          message: message,
+          role: message.role,
+          content: message.content,
+          timestamp: message.timestamp.toISOString(),
         }),
       });
 
-      if (response.ok) {
-        return true;
-      } else {
-        const errorData = await response.json();
-        console.error("Failed to add message:", errorData);
-        return false;
-      }
+      return true;
     } catch (error) {
       console.error("Error adding message:", error);
+      return false;
+    }
+  };
+
+  // Update chat title in backend
+  const updateChatTitleInBackend = async (
+    chatId: string,
+    title: string
+  ): Promise<boolean> => {
+    try {
+      const endpoint = `${API_CONFIG.ENDPOINTS.CHATS}/${chatId}`;
+      const response = await apiCall(endpoint, {
+        method: "PATCH",
+        body: JSON.stringify({ title }),
+      });
+
+      return true;
+    } catch (error) {
+      console.error("Error updating chat title:", error);
       return false;
     }
   };
@@ -528,27 +562,15 @@ export default function AssistantScreen() {
   // Delete chat from backend
   const deleteChatInBackend = async (chatId: string): Promise<boolean> => {
     try {
-      const token = await getAuthToken();
-      if (!token) {
-        Alert.alert("Error", "Authentication required");
-        return false;
-      }
-
       const endpoint = `${API_CONFIG.ENDPOINTS.CHATS}/${chatId}`;
       const response = await apiCall(endpoint, {
         method: "DELETE",
       });
 
-      if (response.ok) {
-        return true;
-      } else {
-        const errorData = await response.json();
-        Alert.alert("Error", errorData.message || "Failed to delete chat");
-        return false;
-      }
+      return true;
     } catch (error) {
       console.error("Error deleting chat:", error);
-      Alert.alert("Error", "Network error while deleting chat");
+      Alert.alert("Error", "Failed to delete chat. Please try again.");
       return false;
     }
   };
@@ -558,15 +580,15 @@ export default function AssistantScreen() {
     loadChats();
   }, []);
 
-  // Scroll to bottom when new messages arrive
+  // Scroll to bottom when new messages arrive or keyboard appears
   useEffect(() => {
-    if (messages.length > 0) {
+    if (messages.length > 0 || isKeyboardVisible) {
       setTimeout(
         () => scrollViewRef.current?.scrollToEnd({ animated: true }),
         100
       );
     }
-  }, [messages.length]);
+  }, [messages.length, isKeyboardVisible]);
 
   // Create new chat
   const createNewChat = async () => {
@@ -582,29 +604,25 @@ export default function AssistantScreen() {
   // Select existing chat
   const selectChat = async (chat: Chat) => {
     try {
-      const token = await getAuthToken();
-      if (!token) return;
-
       const endpoint = `${API_CONFIG.ENDPOINTS.CHATS}/${chat.id}`;
       const response = await apiCall(endpoint, {
         method: "GET",
       });
 
-      if (response.ok) {
-        const fullChat = await response.json();
-        setCurrentChat({
-          id: fullChat._id,
-          _id: fullChat._id,
-          title: fullChat.title,
-          messages: fullChat.messages || [],
-          userId: fullChat.userId,
-          createdAt: fullChat.createdAt,
-          updatedAt: fullChat.updatedAt,
-        });
-        setShowHistory(false);
-      }
+      const fullChat = await response.json();
+      setCurrentChat({
+        id: fullChat._id,
+        _id: fullChat._id,
+        title: fullChat.title,
+        messages: fullChat.messages || [],
+        userId: fullChat.userId,
+        createdAt: fullChat.createdAt,
+        updatedAt: fullChat.updatedAt,
+      });
+      setShowHistory(false);
     } catch (error) {
       console.error("Error loading chat:", error);
+      Alert.alert("Error", "Failed to load chat. Please try again.");
     }
   };
 
@@ -620,7 +638,7 @@ export default function AssistantScreen() {
           if (success) {
             setChats((prev) => prev.filter((chat) => chat.id !== chatId));
             if (currentChat?.id === chatId) {
-              setCurrentChat(null);
+              setCurrentChat(chats.find((chat) => chat.id !== chatId) || null);
             }
           }
         },
@@ -630,10 +648,18 @@ export default function AssistantScreen() {
 
   // Send message to AI and save to backend
   const sendToAI = async (userInput: string) => {
-    if (!currentChat) {
-      await createNewChat();
-      // Wait a bit for the chat to be created
-      await new Promise((resolve) => setTimeout(resolve, 100));
+    let chatToUse = currentChat;
+
+    // Create new chat if none exists
+    if (!chatToUse) {
+      const newChat = await createChatInBackend("New Chat");
+      if (!newChat) {
+        Alert.alert("Error", "Failed to create new chat");
+        return;
+      }
+      chatToUse = newChat;
+      setCurrentChat(newChat);
+      setChats((prev) => [newChat, ...prev]);
     }
 
     try {
@@ -648,15 +674,12 @@ export default function AssistantScreen() {
       };
 
       // Add user message to current chat
-      const updatedMessages = [...(currentChat?.messages || []), userMessage];
-      setCurrentChat((prev) =>
-        prev ? { ...prev, messages: updatedMessages } : null
-      );
+      const updatedMessages = [...(chatToUse.messages || []), userMessage];
+      const updatedChat = { ...chatToUse, messages: updatedMessages };
+      setCurrentChat(updatedChat);
 
       // Save user message to backend
-      if (currentChat) {
-        await addMessageToChat(currentChat.id, userMessage);
-      }
+      await addMessageToChat(chatToUse.id, userMessage);
 
       // Generate AI response
       const responseText = await aiService.current.generateHumanizedResponse(
@@ -673,22 +696,17 @@ export default function AssistantScreen() {
 
       // Add assistant message to current chat
       const finalMessages = [...updatedMessages, assistantMessage];
-      setCurrentChat((prev) =>
-        prev ? { ...prev, messages: finalMessages } : null
-      );
+      const finalChat = { ...updatedChat, messages: finalMessages };
+      setCurrentChat(finalChat);
 
       // Save assistant message to backend
-      if (currentChat) {
-        await addMessageToChat(currentChat.id, assistantMessage);
-      }
+      await addMessageToChat(chatToUse.id, assistantMessage);
 
       // Update chat title with first user message if it's still "New Chat"
       if (
-        currentChat &&
-        currentChat.title === "New Chat" &&
-        finalMessages.length === 2
+        chatToUse.title === "New Chat" &&
+        finalMessages.filter((msg) => msg.role === "user").length === 1
       ) {
-        // Use first user message as title (truncated)
         const firstUserMessage = finalMessages.find(
           (msg) => msg.role === "user"
         );
@@ -703,12 +721,12 @@ export default function AssistantScreen() {
           );
           setChats((prev) =>
             prev.map((chat) =>
-              chat.id === currentChat.id ? { ...chat, title: newTitle } : chat
+              chat.id === chatToUse.id ? { ...chat, title: newTitle } : chat
             )
           );
 
-          // Update title in backend (you would need to implement this endpoint)
-          // await updateChatTitleInBackend(currentChat.id, newTitle);
+          // Update title in backend
+          await updateChatTitleInBackend(chatToUse.id, newTitle);
         }
       }
     } catch (error) {
@@ -740,7 +758,7 @@ export default function AssistantScreen() {
       setTextInput("");
       Keyboard.dismiss();
     }
-  }, [textInput, isProcessing, sendToAI]);
+  }, [textInput, isProcessing]);
 
   const showModelInfo = useCallback(() => {
     Alert.alert("Connection Status", "✅ Connected to Gemini AI", [
@@ -775,11 +793,13 @@ export default function AssistantScreen() {
               ref={scrollViewRef}
               contentContainerStyle={[
                 styles.chatContent,
-                { paddingBottom: contentPaddingBottom },
+                {
+                  paddingBottom: isKeyboardVisible ? keyboardHeight + 120 : 120,
+                },
               ]}
               showsVerticalScrollIndicator={false}
             >
-              {!currentChat && (
+              {!currentChat && isInitialized && (
                 <View style={styles.welcomeContainer}>
                   <Text style={styles.welcomeTitle}>Hello! I'm YoVA 👋</Text>
                   <Text style={styles.welcomeSubtitle}>
@@ -789,9 +809,20 @@ export default function AssistantScreen() {
                 </View>
               )}
 
-              {messages.map((message) => (
-                <MessageBubble key={message.id} message={message} />
-              ))}
+              {messages.map((message, index) => {
+                const isLastMessage = index === messages.length - 1;
+                const isAssistant = message.role === "assistant";
+                const isTyping = isLastMessage && isAssistant && !isProcessing;
+
+                return (
+                  <MessageBubble
+                    key={message.id}
+                    message={message}
+                    isTyping={isTyping}
+                    displayedText={displayedText}
+                  />
+                );
+              })}
 
               {isProcessing && (
                 <MessageBubble
@@ -833,7 +864,7 @@ export default function AssistantScreen() {
   );
 }
 
-// Styles (updated for new components)
+// Styles (unchanged, but here for completeness)
 const styles = StyleSheet.create({
   container: { flex: 1 },
   gradient: { flex: 1 },
@@ -854,7 +885,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   headerRight: { flexDirection: "row", gap: 8 },
-  headerCenter: { alignItems: "center" },
+  headerCenter: { alignItems: "center", flex: 1, marginHorizontal: 10 },
   headerTitle: { fontSize: 20, fontWeight: "700", color: "#F5C563" },
   headerSubtitle: {
     fontSize: 12,
@@ -862,10 +893,21 @@ const styles = StyleSheet.create({
     opacity: 0.8,
     marginTop: 2,
   },
-  content: { flex: 1, flexDirection: "row" },
-  chatContainer: { flex: 1, marginRight: 12 },
-  chatContainerFull: { marginRight: 0 },
-  chatContent: { paddingHorizontal: 16, paddingTop: 20 },
+  content: {
+    flex: 1,
+    flexDirection: "row",
+  },
+  chatContainer: {
+    flex: 1,
+    marginRight: 12,
+  },
+  chatContainerFull: {
+    marginRight: 0,
+  },
+  chatContent: {
+    paddingHorizontal: 16,
+    paddingTop: 20,
+  },
   welcomeContainer: {
     alignItems: "center",
     paddingVertical: 40,
@@ -885,7 +927,11 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 22,
   },
-  messageContainer: { marginBottom: 20, padding: 16, borderRadius: 12 },
+  messageContainer: {
+    marginBottom: 20,
+    padding: 16,
+    borderRadius: 12,
+  },
   userMessage: {
     backgroundColor: "rgba(139, 121, 101, 0.2)",
     marginLeft: 40,
@@ -907,12 +953,33 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 8,
   },
-  messageRole: { fontSize: 14, fontWeight: "600", color: "#F5C563", flex: 1 },
-  messageTime: { fontSize: 12, color: "#8B7965" },
-  messageText: { fontSize: 16, color: "#FFFFFF", lineHeight: 22 },
-  thinkingContainer: { paddingVertical: 8 },
-  thinkingText: { fontSize: 16, color: "#F5C563", fontStyle: "italic" },
-  cursor: { color: "#F5C563", fontWeight: "bold" },
+  messageRole: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#F5C563",
+    flex: 1,
+  },
+  messageTime: {
+    fontSize: 12,
+    color: "#8B7965",
+  },
+  messageText: {
+    fontSize: 16,
+    color: "#FFFFFF",
+    lineHeight: 22,
+  },
+  thinkingContainer: {
+    paddingVertical: 8,
+  },
+  thinkingText: {
+    fontSize: 16,
+    color: "#F5C563",
+    fontStyle: "italic",
+  },
+  cursor: {
+    color: "#F5C563",
+    fontWeight: "bold",
+  },
   inputBar: {
     backgroundColor: "rgba(26, 20, 16, 0.95)",
     borderTopWidth: 1,
@@ -920,6 +987,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 16,
     paddingBottom: 20,
+  },
+  inputBarKeyboardOpen: {
+    paddingBottom: 10,
   },
   inputContainer: {
     flexDirection: "row",
@@ -947,7 +1017,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  sendButtonDisabled: { backgroundColor: "#8B7965", opacity: 0.5 },
+  sendButtonDisabled: {
+    backgroundColor: "#8B7965",
+    opacity: 0.5,
+  },
   historyContainer: {
     width: width * 0.35,
     backgroundColor: "rgba(45, 37, 32, 0.9)",
@@ -963,10 +1036,23 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "rgba(139, 121, 101, 0.3)",
   },
-  historyTitle: { fontSize: 14, fontWeight: "600", color: "#F5C563" },
-  hideButton: { padding: 4 },
-  hideButtonText: { color: "#F5C563", fontSize: 16, fontWeight: "bold" },
-  historyList: { flex: 1, padding: 8 },
+  historyTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#F5C563",
+  },
+  hideButton: {
+    padding: 4,
+  },
+  hideButtonText: {
+    color: "#F5C563",
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  historyList: {
+    flex: 1,
+    padding: 8,
+  },
   historyItem: {
     flexDirection: "row",
     alignItems: "center",
@@ -981,7 +1067,9 @@ const styles = StyleSheet.create({
     borderColor: "#F5C563",
     backgroundColor: "rgba(245, 197, 99, 0.1)",
   },
-  historyItemContent: { flex: 1 },
+  historyItemContent: {
+    flex: 1,
+  },
   historyItemTitle: {
     fontSize: 14,
     color: "#E8DDD3",

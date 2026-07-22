@@ -17,7 +17,13 @@ import { useRouter } from "expo-router";
 
 const { width: screenWidth } = Dimensions.get("window");
 
-export default function OnboardingScreen() {
+interface OnboardingScreenProps {
+  onComplete?: () => void;
+}
+
+export default function OnboardingScreen({
+  onComplete,
+}: OnboardingScreenProps) {
   const [currentSlide, setCurrentSlide] = useState(0);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -62,14 +68,15 @@ export default function OnboardingScreen() {
       };
 
       const response = await fetch(
-        "http://192.168.1.2:8080/api/" + (isLogin ? "login" : "signup"),
+        "https://yova-virtual-assistant.onrender.com/api/" +
+          (isLogin ? "login" : "signup"),
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(authData),
-        }
+        },
       );
 
       const data = await response.json();
@@ -78,6 +85,7 @@ export default function OnboardingScreen() {
         await AsyncStorage.setItem("userToken", data.token);
         await AsyncStorage.setItem("userData", JSON.stringify(data.user));
         await AsyncStorage.setItem("onboardingCompleted", "true");
+        onComplete?.();
         router.replace("/");
       } else {
         Alert.alert("Error", data.message || "Authentication failed");
@@ -105,6 +113,7 @@ export default function OnboardingScreen() {
       // Just mark onboarding as completed without any user data
       await AsyncStorage.setItem("onboardingCompleted", "true");
       // Redirect to home screen without token
+      onComplete?.();
       router.replace("/");
     } catch (error) {
       console.error("Skip error:", error);
@@ -125,7 +134,7 @@ export default function OnboardingScreen() {
 
   const handleScroll = (event: any) => {
     const slideIndex = Math.round(
-      event.nativeEvent.contentOffset.x / screenWidth
+      event.nativeEvent.contentOffset.x / screenWidth,
     );
     setCurrentSlide(slideIndex);
   };

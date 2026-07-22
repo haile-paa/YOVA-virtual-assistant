@@ -18,10 +18,11 @@ import {
   ActivityIndicator,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { handleSessionExpired } from "../utils/session";
 
 // API Configuration - Define once, use everywhere
 const API_CONFIG = {
-  BASE_URL: "http://192.168.1.2:8080/api",
+  BASE_URL: "https://yova-virtual-assistant.onrender.com/api",
   ENDPOINTS: {
     NOTES: "/notes",
   },
@@ -83,6 +84,13 @@ export default function NotesWidget({ searchQuery = "" }: NotesWidgetProps) {
       ...defaultOptions,
       ...options,
     });
+
+    if (response.status === 401) {
+      // Session expired or token invalid - clear it and send the user
+      // back to onboarding/login. This is an expected, routine condition,
+      // so we don't surface it as an error to the user.
+      await handleSessionExpired();
+    }
 
     return response;
   };
@@ -170,7 +178,7 @@ export default function NotesWidget({ searchQuery = "" }: NotesWidgetProps) {
 
   const updateNoteInBackend = async (
     id: string,
-    note: { title: string; content: string }
+    note: { title: string; content: string },
   ): Promise<boolean> => {
     try {
       const token = await getAuthToken();
@@ -232,7 +240,7 @@ export default function NotesWidget({ searchQuery = "" }: NotesWidgetProps) {
     ? notes.filter(
         (note) =>
           note.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          note.content.toLowerCase().includes(searchQuery.toLowerCase())
+          note.content.toLowerCase().includes(searchQuery.toLowerCase()),
       )
     : notes;
 
@@ -317,8 +325,8 @@ export default function NotesWidget({ searchQuery = "" }: NotesWidgetProps) {
           prev.map((n) =>
             n.id === expandedNote.id
               ? { ...n, title: editedTitle, content: editedContent }
-              : n
-          )
+              : n,
+          ),
         );
         setExpandedNote({
           ...expandedNote,
