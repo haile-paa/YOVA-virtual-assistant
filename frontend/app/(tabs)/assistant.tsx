@@ -21,16 +21,16 @@ import {
   Keyboard,
   ActivityIndicator,
 } from "react-native";
-import { GoogleGenAI } from "@google/genai";
-import { ENV } from "../../config/env";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { handleSessionExpired } from "../../utils/session";
 
 // API Configuration - Define once, use everywhere
 const API_CONFIG = {
   BASE_URL: "https://yova-virtual-assistant.onrender.com/api",
   ENDPOINTS: {
     CHATS: "/chats",
-    CHAT_MESSAGES: "/chats/{id}",
+    CHAT_MESSAGES: "/chats/{id}/messages",
+    ASSISTANT_CHAT: "/assistant/chat",
   },
 };
 
@@ -68,7 +68,7 @@ const useKeyboard = () => {
       (e) => {
         setKeyboardVisible(true);
         setKeyboardHeight(e.endCoordinates.height);
-      }
+      },
     );
 
     const keyboardDidHideListener = Keyboard.addListener(
@@ -76,7 +76,7 @@ const useKeyboard = () => {
       () => {
         setKeyboardVisible(false);
         setKeyboardHeight(0);
-      }
+      },
     );
 
     return () => {
@@ -90,7 +90,6 @@ const useKeyboard = () => {
 
 const useTypingEffect = (text: string, isActive: boolean) => {
   const [displayedText, setDisplayedText] = useState("");
-  const typingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!isActive || !text) {
@@ -98,20 +97,33 @@ const useTypingEffect = (text: string, isActive: boolean) => {
       return;
     }
 
-    let currentIndex = 0;
-    setDisplayedText("");
+    let cancelled = false;
+    let index = 0;
+    let timeoutId: ReturnType<typeof setTimeout>;
 
-    typingIntervalRef.current = setInterval(() => {
-      if (currentIndex < text.length) {
-        setDisplayedText((prev) => prev + text[currentIndex]);
-        currentIndex++;
-      } else {
-        typingIntervalRef.current && clearInterval(typingIntervalRef.current);
+    // Deriving the displayed slice from an absolute index (rather than
+    // appending one character onto whatever the previous state happened to
+    // be) means each tick is self-contained - nothing to desync if an
+    // earlier tick got delayed or double-invoked (e.g. React StrictMode's
+    // dev-mode double effect run), which was previously dropping the first
+    // character of the reply.
+    setDisplayedText(text.slice(0, 1));
+    index = 1;
+
+    const tick = () => {
+      if (cancelled) return;
+      if (index < text.length) {
+        index++;
+        setDisplayedText(text.slice(0, index));
+        timeoutId = setTimeout(tick, 20);
       }
-    }, 20);
+    };
+
+    timeoutId = setTimeout(tick, 20);
 
     return () => {
-      typingIntervalRef.current && clearInterval(typingIntervalRef.current);
+      cancelled = true;
+      clearTimeout(timeoutId);
     };
   }, [text, isActive]);
 
@@ -139,39 +151,53 @@ const useThinkingAnimation = (isThinking: boolean) => {
   return thinkingDots;
 };
 
-// AI Service
+// AI Service - talks to our own backend, which proxies to Groq. The API
+// key never lives in this app; it stays server-side.
 class HumanizedAIService {
-  private genAI: GoogleGenAI;
+  private baseUrl: string;
+  private getAuthToken: () => Promise<string | null>;
 
-  constructor(apiKey: string) {
-    this.genAI = new GoogleGenAI({ apiKey });
+  constructor(baseUrl: string, getAuthToken: () => Promise<string | null>) {
+    this.baseUrl = baseUrl;
+    this.getAuthToken = getAuthToken;
   }
 
   async generateHumanizedResponse(userInput: string): Promise<string> {
     try {
-      const response = await this.genAI.models.generateContent({
-        model: "gemini-2.0-flash-exp",
-        contents: this.createHumanizedPrompt(userInput),
+      const token = await this.getAuthToken();
+
+      const response = await fetch(`${this.baseUrl}/assistant/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ message: userInput }),
       });
 
-      let responseText =
-        response.text ||
-        "Hmm, I'm not sure how to respond to that. Could you try asking in a different way?";
-      return this.postProcessResponse(responseText, userInput);
+      if (response.status === 401) {
+        await handleSessionExpired();
+        return "Sorry, I'm having trouble thinking right now. Could you try again in a moment?";
+      }
+
+      if (!response.ok) {
+        throw new Error(`Assistant request failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      return this.postProcessResponse(data.reply || "", userInput);
     } catch (error) {
       console.error("AI Service Error:", error);
       return "Sorry, I'm having trouble thinking right now. Could you try again in a moment?";
     }
   }
 
-  private createHumanizedPrompt(userInput: string): string {
-    return `You are YoVA (Your Virtual Assistant), a friendly and helpful AI assistant. Respond naturally and conversationally. Be friendly, concise, and avoid robotic language. Use contractions and show personality. Keep responses under 200 words when possible.
-
-User's message: "${userInput}"`;
-  }
-
   private postProcessResponse(text: string, userInput: string): string {
     let processed = text.trim();
+
+    // Safety net: strip a stray literal "undefined" if it ever shows up.
+    processed = processed.replace(/\s*undefined\s*$/i, "").trim();
+
     processed = processed.charAt(0).toUpperCase() + processed.slice(1);
 
     // Remove any markdown formatting or special characters that might cause issues
@@ -321,9 +347,9 @@ const InputBar = ({
   onSubmit,
   isProcessing,
   hasAvailableModels,
+  isKeyboardVisible,
+  keyboardHeight,
 }: any) => {
-  const { isKeyboardVisible } = useKeyboard();
-
   const handleSubmit = useCallback(() => {
     if (textInput.trim() && !isProcessing && hasAvailableModels) {
       onSubmit();
@@ -338,6 +364,11 @@ const InputBar = ({
       style={[
         styles.inputBar,
         isKeyboardVisible && styles.inputBarKeyboardOpen,
+        // Neither platform reliably auto-resizes around the keyboard here
+        // (iOS never does; Android's edgeToEdgeEnabled setting means it
+        // can't be relied on either), so push the bar up manually using
+        // the tracked keyboard height.
+        isKeyboardVisible && { marginBottom: keyboardHeight },
       ]}
     >
       <View style={styles.inputContainer}>
@@ -385,18 +416,6 @@ export default function AssistantScreen() {
 
   // Refs and hooks
   const scrollViewRef = useRef<ScrollView>(null);
-  const aiService = useRef(new HumanizedAIService(ENV.GENAI_API_KEY));
-  const { isKeyboardVisible, keyboardHeight } = useKeyboard();
-
-  // Derived states
-  const messages = currentChat?.messages || [];
-  const lastMessage = messages[messages.length - 1];
-  const isLastMessageFromAssistant = lastMessage?.role === "assistant";
-  const displayedText = useTypingEffect(
-    lastMessage?.content || "",
-    !isProcessing && isLastMessageFromAssistant
-  );
-  const thinkingDots = useThinkingAnimation(isProcessing);
 
   // Get auth token
   const getAuthToken = async (): Promise<string | null> => {
@@ -407,6 +426,21 @@ export default function AssistantScreen() {
       return null;
     }
   };
+
+  const aiService = useRef(
+    new HumanizedAIService(API_CONFIG.BASE_URL, getAuthToken),
+  );
+  const { isKeyboardVisible, keyboardHeight } = useKeyboard();
+
+  // Derived states
+  const messages = currentChat?.messages || [];
+  const lastMessage = messages[messages.length - 1];
+  const isLastMessageFromAssistant = lastMessage?.role === "assistant";
+  const displayedText = useTypingEffect(
+    lastMessage?.content || "",
+    !isProcessing && isLastMessageFromAssistant,
+  );
+  const thinkingDots = useThinkingAnimation(isProcessing);
 
   // Helper function to make API calls
   const apiCall = async (endpoint: string, options: RequestInit = {}) => {
@@ -425,9 +459,13 @@ export default function AssistantScreen() {
       ...options,
     });
 
+    if (response.status === 401) {
+      await handleSessionExpired();
+    }
+
     if (!response.ok) {
       throw new Error(
-        `API call failed: ${response.status} ${response.statusText}`
+        `API call failed: ${response.status} ${response.statusText}`,
       );
     }
 
@@ -479,7 +517,7 @@ export default function AssistantScreen() {
       console.error("Error fetching chats:", error);
       Alert.alert(
         "Error",
-        "Failed to load chats. Please check your connection."
+        "Failed to load chats. Please check your connection.",
       );
     } finally {
       setLoadingChats(false);
@@ -517,7 +555,7 @@ export default function AssistantScreen() {
   // Add message to chat in backend
   const addMessageToChat = async (
     chatId: string,
-    message: Message
+    message: Message,
   ): Promise<boolean> => {
     try {
       const endpoint = formatEndpoint(API_CONFIG.ENDPOINTS.CHAT_MESSAGES, {
@@ -527,9 +565,13 @@ export default function AssistantScreen() {
       const response = await apiCall(endpoint, {
         method: "POST",
         body: JSON.stringify({
-          role: message.role,
-          content: message.content,
-          timestamp: message.timestamp.toISOString(),
+          chatId: chatId,
+          message: {
+            id: message.id,
+            role: message.role,
+            content: message.content,
+            timestamp: message.timestamp.toISOString(),
+          },
         }),
       });
 
@@ -543,12 +585,12 @@ export default function AssistantScreen() {
   // Update chat title in backend
   const updateChatTitleInBackend = async (
     chatId: string,
-    title: string
+    title: string,
   ): Promise<boolean> => {
     try {
       const endpoint = `${API_CONFIG.ENDPOINTS.CHATS}/${chatId}`;
       const response = await apiCall(endpoint, {
-        method: "PATCH",
+        method: "PUT",
         body: JSON.stringify({ title }),
       });
 
@@ -585,7 +627,7 @@ export default function AssistantScreen() {
     if (messages.length > 0 || isKeyboardVisible) {
       setTimeout(
         () => scrollViewRef.current?.scrollToEnd({ animated: true }),
-        100
+        100,
       );
     }
   }, [messages.length, isKeyboardVisible]);
@@ -682,9 +724,8 @@ export default function AssistantScreen() {
       await addMessageToChat(chatToUse.id, userMessage);
 
       // Generate AI response
-      const responseText = await aiService.current.generateHumanizedResponse(
-        userInput
-      );
+      const responseText =
+        await aiService.current.generateHumanizedResponse(userInput);
 
       // Create assistant message
       const assistantMessage: Message = {
@@ -708,7 +749,7 @@ export default function AssistantScreen() {
         finalMessages.filter((msg) => msg.role === "user").length === 1
       ) {
         const firstUserMessage = finalMessages.find(
-          (msg) => msg.role === "user"
+          (msg) => msg.role === "user",
         );
         if (firstUserMessage) {
           const newTitle =
@@ -717,12 +758,12 @@ export default function AssistantScreen() {
               : firstUserMessage.content;
 
           setCurrentChat((prev) =>
-            prev ? { ...prev, title: newTitle } : null
+            prev ? { ...prev, title: newTitle } : null,
           );
           setChats((prev) =>
             prev.map((chat) =>
-              chat.id === chatToUse.id ? { ...chat, title: newTitle } : chat
-            )
+              chat.id === chatToUse.id ? { ...chat, title: newTitle } : chat,
+            ),
           );
 
           // Update title in backend
@@ -744,7 +785,7 @@ export default function AssistantScreen() {
               ...prev,
               messages: [...(prev.messages || []), errorMessage],
             }
-          : null
+          : null,
       );
     } finally {
       setIsProcessing(false);
@@ -858,6 +899,8 @@ export default function AssistantScreen() {
           onSubmit={handleTextSubmit}
           isProcessing={isProcessing}
           hasAvailableModels={true}
+          isKeyboardVisible={isKeyboardVisible}
+          keyboardHeight={keyboardHeight}
         />
       </LinearGradient>
     </View>

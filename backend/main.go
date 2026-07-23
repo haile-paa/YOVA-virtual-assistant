@@ -80,6 +80,12 @@ func main() {
 	chats.HandleFunc("/{id}", handlers.DeleteChat).Methods("DELETE")
 	chats.HandleFunc("/{id}/messages", handlers.AddMessage).Methods("POST")
 
+	// Assistant route - protected. Proxies chat requests to Groq so the API
+	// key stays server-side and never ships inside the app bundle.
+	assistant := r.PathPrefix("/api/assistant").Subrouter()
+	assistant.Use(middleware.AuthMiddleware)
+	assistant.HandleFunc("/chat", handlers.AssistantChat).Methods("POST")
+
 	// CORS middleware - needed for the Expo web build and any browser-based client.
 	// Native mobile requests aren't affected either way, so this is safe to enable.
 	r.Use(func(next http.Handler) http.Handler {
