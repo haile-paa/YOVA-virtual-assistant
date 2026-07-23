@@ -123,7 +123,7 @@ export default function NotesWidget({ searchQuery = "" }: NotesWidgetProps) {
           updatedAt: note.updatedAt,
         }));
         setNotes(transformedNotes);
-      } else {
+      } else if (response.status !== 401) {
         console.error("Failed to fetch notes:", response.status);
       }
     } catch (error) {

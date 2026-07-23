@@ -122,7 +122,10 @@ export default function TasksWidget({
           updatedAt: task.updatedAt,
         }));
         setTasks(transformedTasks);
-      } else {
+      } else if (response.status !== 401) {
+        // A 401 is already handled by apiCall (session cleared, user sent
+        // back to onboarding) - it's an expected, routine condition, not
+        // something worth surfacing as a dev error overlay.
         console.error("Failed to fetch tasks:", response.status);
       }
     } catch (error) {

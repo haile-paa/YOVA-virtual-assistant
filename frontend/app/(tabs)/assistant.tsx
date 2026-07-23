@@ -501,7 +501,10 @@ export default function AssistantScreen() {
         id: chat._id,
         _id: chat._id,
         title: chat.title,
-        messages: chat.messages || [],
+        messages: (chat.messages || []).map((message: any) => ({
+          ...message,
+          timestamp: new Date(message.timestamp),
+        })),
         userId: chat.userId,
         createdAt: chat.createdAt,
         updatedAt: chat.updatedAt,
@@ -540,7 +543,10 @@ export default function AssistantScreen() {
         id: data._id,
         _id: data._id,
         title: data.title,
-        messages: data.messages || [],
+        messages: (data.messages || []).map((message: any) => ({
+          ...message,
+          timestamp: new Date(message.timestamp),
+        })),
         userId: data.userId,
         createdAt: data.createdAt,
         updatedAt: data.updatedAt,
@@ -656,7 +662,10 @@ export default function AssistantScreen() {
         id: fullChat._id,
         _id: fullChat._id,
         title: fullChat.title,
-        messages: fullChat.messages || [],
+        messages: (fullChat.messages || []).map((message: any) => ({
+          ...message,
+          timestamp: new Date(message.timestamp),
+        })),
         userId: fullChat.userId,
         createdAt: fullChat.createdAt,
         updatedAt: fullChat.updatedAt,
@@ -802,7 +811,7 @@ export default function AssistantScreen() {
   }, [textInput, isProcessing]);
 
   const showModelInfo = useCallback(() => {
-    Alert.alert("Connection Status", "✅ Connected to Gemini AI", [
+    Alert.alert("Connection Status", "✅ Connected to Grok AI", [
       { text: "OK" },
     ]);
   }, []);

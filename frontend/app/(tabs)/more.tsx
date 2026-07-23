@@ -12,8 +12,6 @@ import {
   Palette,
   Volume2,
   Vibrate,
-  Database,
-  Trash2,
 } from "lucide-react-native";
 import {
   ScrollView,
@@ -25,23 +23,11 @@ import {
   Switch,
   Modal,
   ActivityIndicator,
+  Linking,
 } from "react-native";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useState, useEffect } from "react";
-
-// API Configuration - Define once, use everywhere
-const API_CONFIG = {
-  BASE_URL: "https://yova-virtual-assistant.onrender.com/api",
-  ENDPOINTS: {
-    NOTES: "/notes",
-    TASKS: "/tasks",
-    EVENTS: "/events",
-    CLEAR_NOTES: "/notes/clear-all",
-    CLEAR_TASKS: "/tasks/clear-all",
-    CLEAR_EVENTS: "/events/clear-all",
-  },
-};
 
 interface MenuItem {
   id: string;
@@ -192,112 +178,6 @@ export default function MoreScreen() {
     }
   };
 
-  // Helper function to make API calls
-  const apiCall = async (endpoint: string, options: RequestInit = {}) => {
-    const token = await AsyncStorage.getItem("userToken");
-
-    const defaultOptions: RequestInit = {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        ...options.headers,
-      },
-    };
-
-    const response = await fetch(`${API_CONFIG.BASE_URL}${endpoint}`, {
-      ...defaultOptions,
-      ...options,
-    });
-
-    return response;
-  };
-
-  const clearAllData = () => {
-    Alert.alert(
-      "Clear All Data",
-      "This will delete all your notes, tasks, and events. This action cannot be undone.",
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
-        {
-          text: "Clear Everything",
-          style: "destructive",
-          onPress: async () => {
-            setLoading(true);
-            try {
-              // Clear all app data except authentication
-              await AsyncStorage.multiRemove([
-                "notes",
-                "tasks",
-                "events",
-                "chats",
-              ]);
-
-              // Also clear from backend by making API calls
-              const token = await AsyncStorage.getItem("userToken");
-              if (token) {
-                await Promise.all([
-                  apiCall(API_CONFIG.ENDPOINTS.CLEAR_NOTES, {
-                    method: "DELETE",
-                  }).catch(() => {}),
-                  apiCall(API_CONFIG.ENDPOINTS.CLEAR_TASKS, {
-                    method: "DELETE",
-                  }).catch(() => {}),
-                  apiCall(API_CONFIG.ENDPOINTS.CLEAR_EVENTS, {
-                    method: "DELETE",
-                  }).catch(() => {}),
-                ]);
-              }
-
-              Alert.alert("Success", "All data has been cleared successfully.");
-            } catch (error) {
-              console.error("Error clearing data:", error);
-              Alert.alert("Error", "Failed to clear data. Please try again.");
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const exportData = async () => {
-    setLoading(true);
-    try {
-      const [notesRes, tasksRes, eventsRes] = await Promise.all([
-        apiCall(API_CONFIG.ENDPOINTS.NOTES),
-        apiCall(API_CONFIG.ENDPOINTS.TASKS),
-        apiCall(API_CONFIG.ENDPOINTS.EVENTS),
-      ]);
-
-      const [notes, tasks, events] = await Promise.all([
-        notesRes.json(),
-        tasksRes.json(),
-        eventsRes.json(),
-      ]);
-
-      const exportData = {
-        exportDate: new Date().toISOString(),
-        user: userData,
-        notes,
-        tasks,
-        events,
-      };
-
-      // In a real app, you'd save this as a file or share it
-      console.log("Export Data:", JSON.stringify(exportData, null, 2));
-      Alert.alert("Export Complete", "Your data has been prepared for export.");
-    } catch (error) {
-      console.error("Error exporting data:", error);
-      Alert.alert("Error", "Failed to export data.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <View style={styles.container}>
       <LinearGradient
@@ -401,32 +281,6 @@ export default function MoreScreen() {
                 thumbColor={settings.vibration ? "#FFFFFF" : "#FFFFFF"}
               />
             </View>
-          </View>
-
-          {/* Data Management */}
-          <View style={styles.dataManagement}>
-            <Text style={styles.sectionTitle}>Data Management</Text>
-            <TouchableOpacity
-              style={styles.dataButton}
-              onPress={exportData}
-              disabled={loading}
-            >
-              <Database size={20} color='#F5C563' />
-              <Text style={styles.dataButtonText}>
-                {loading ? "Exporting..." : "Export Data"}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.dataButton, styles.clearButton]}
-              onPress={clearAllData}
-              disabled={loading}
-            >
-              <Trash2 size={20} color='#FF6B6B' />
-              <Text style={[styles.dataButtonText, styles.clearButtonText]}>
-                {loading ? "Clearing..." : "Clear All Data"}
-              </Text>
-            </TouchableOpacity>
           </View>
 
           <View style={styles.infoSection}>
@@ -560,9 +414,18 @@ export default function MoreScreen() {
                 <Text style={styles.helpTitle}>Need Help?</Text>
                 <Text style={styles.helpText}>
                   Contact our support team at:
-                  {"\n"}support@yova-app.com
-                  {"\n"}
-                  {"\n"}Or chat with our AI assistant for immediate help.
+                </Text>
+                <TouchableOpacity
+                  onPress={() =>
+                    Linking.openURL("mailto:pa.developments@gmail.com")
+                  }
+                >
+                  <Text style={styles.helpEmailLink}>
+                    pa.developments@gmail.com
+                  </Text>
+                </TouchableOpacity>
+                <Text style={styles.helpText}>
+                  Or chat with our AI assistant for immediate help.
                 </Text>
               </View>
 
@@ -685,39 +548,6 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontWeight: "500",
   },
-  // Data Management Styles
-  dataManagement: {
-    backgroundColor: "rgba(232, 221, 211, 0.1)",
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: "rgba(232, 221, 211, 0.2)",
-    marginBottom: 32,
-  },
-  dataButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    backgroundColor: "rgba(245, 197, 99, 0.1)",
-    borderRadius: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: "rgba(245, 197, 99, 0.3)",
-  },
-  dataButtonText: {
-    fontSize: 16,
-    color: "#F5C563",
-    fontWeight: "600",
-  },
-  clearButton: {
-    backgroundColor: "rgba(255, 107, 107, 0.1)",
-    borderColor: "rgba(255, 107, 107, 0.3)",
-  },
-  clearButtonText: {
-    color: "#FF6B6B",
-  },
   // Info Section
   infoSection: {
     backgroundColor: "rgba(232, 221, 211, 0.1)",
@@ -809,5 +639,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#BFB5AB",
     lineHeight: 20,
+  },
+  helpEmailLink: {
+    fontSize: 14,
+    color: "#F5C563",
+    fontWeight: "600",
+    lineHeight: 20,
+    textDecorationLine: "underline",
   },
 });

@@ -120,7 +120,7 @@ export default function ScheduleWidget({
           updatedAt: event.updatedAt,
         }));
         setEvents(transformedEvents);
-      } else {
+      } else if (response.status !== 401) {
         console.error("Failed to fetch events:", response.status);
       }
     } catch (error) {
