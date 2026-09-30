@@ -1,0 +1,27 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html { scroll-behavior: smooth; }
+body { @apply bg-bg text-cream font-body antialiased overflow-x-hidden; }
+h1, h2, h3 { @apply font-disp tracking-tight; }
+::selection { background: rgba(244,185,66,.35); }
+
+.bg-glow::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(700px 420px at 88% -6%, rgba(244,185,66,.16), transparent 60%),
+    radial-gradient(520px 380px at 4% 12%, rgba(190,110,60,.13), transparent 60%);
+}
+@layer components {
+  .wrap { @apply max-w-wrap mx-auto px-6 relative z-10; }
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-full font-semibold text-[15px] px-6 py-3.5 whitespace-nowrap transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber focus-visible:outline-offset-4; }
+  .btn-primary { @apply bg-cta text-ink shadow-glow hover:brightness-110; }
+  .btn-ghost { @apply border border-line2 text-cream hover:bg-bg2; }
+  .btn-sm { @apply px-[18px] py-2.5 text-[13.5px]; }
+  .card { @apply bg-bg1 border border-line rounded-[20px]; }
+  .tag { @apply inline-block w-fit rounded-full bg-amber/15 text-amber text-[12.5px] font-semibold px-3 py-1; }
+  .phone-frame { @apply rounded-[32px] border-[6px] border-[#0d0906] bg-black overflow-hidden shadow-[0_30px_70px_-20px_rgba(0,0,0,0.65)]; }
+}
+@media (prefers-reduced-motion: reduce) { .animate-marquee { animation: none; } }
